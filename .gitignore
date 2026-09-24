@@ -1,0 +1,18 @@
+# Keil MDK 构建产物
+*.o
+*.d
+*.crf
+*.axf
+*.htm
+*.lnp
+*.map
+*.lst
+*.dep
+*.iex
+*.sct
+*.build_log.htm
+*.uvguix.*
+MDK-ARM/DebugConfig/
+MDK-ARM/RTE/_*/
+MDK-ARM/WatchV1/
+EventRecorderStub.scvd
