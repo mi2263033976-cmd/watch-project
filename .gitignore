@@ -16,3 +16,12 @@ MDK-ARM/DebugConfig/
 MDK-ARM/RTE/_*/
 MDK-ARM/WatchV1/
 EventRecorderStub.scvd
+
+# 软件资料包（310M，不入库）
+04_Software/
+
+# Keil 生成物 / 个人设置（补充）
+*.hex
+*.uvoptx
+JLinkLog.txt
+JLinkSettings.ini
