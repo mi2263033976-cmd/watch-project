@@ -30,6 +30,7 @@
 #include <stdio.h>  
 #include "lcd.h"
 #include "i2c_scan.h"
+#include "i2c_soft.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -97,19 +98,20 @@ int main(void)
   MX_TIM3_Init();
   MX_SPI1_Init();
   MX_I2C1_Init();
+  I2C_Soft_Init();
   /* USER CODE BEGIN 2 */
   SEGGER_RTT_Init();                       /* 可选：第一次调用会自动初始化 */
     SEGGER_RTT_printf(0, "--- boot ---\r\n");     /* ← 加这句 */
   HAL_Delay(200);          /* ← 加这句：等 AHT21 上电就绪（手册要求 ≥100ms）*/
   I2C_Scan();
-  uint8_t val = 0xA5;
-  uint8_t rd  = 0x00;
-  HAL_I2C_Mem_Write(&hi2c1, 0xA0, 0x00, I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
-  HAL_Delay(10);
-  HAL_I2C_Mem_Read(&hi2c1, 0xA0, 0x00, I2C_MEMADD_SIZE_8BIT, &rd, 1, 100);
+//  uint8_t val = 0xA5;
+//  uint8_t rd  = 0x00;
+//  HAL_I2C_Mem_Write(&hi2c1, 0xA0, 0x00, I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
+//  HAL_Delay(10);
+//  HAL_I2C_Mem_Read(&hi2c1, 0xA0, 0x00, I2C_MEMADD_SIZE_8BIT, &rd, 1, 100);
 
-  SEGGER_RTT_printf(0, "EEPROM write=0x%02X read=0x%02X -> %s\r\n",
-                  val, rd, (rd == val) ? "OK" : "FAIL");
+//  SEGGER_RTT_printf(0, "EEPROM write=0x%02X read=0x%02X -> %s\r\n",
+//                  val, rd, (rd == val) ? "OK" : "FAIL");
 
 
 
@@ -127,8 +129,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    
-
+    //TaskA_SCL_SquareWave();
+	TaskB_SDA_TogglePer8Pulse();
   }
   /* USER CODE END 3 */
 }

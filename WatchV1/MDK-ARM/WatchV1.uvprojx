@@ -880,6 +880,11 @@
               <FileType>1</FileType>
               <FilePath>..\BSP\i2c_scan.c</FilePath>
             </File>
+            <File>
+              <FileName>i2c_soft.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\i2c_soft.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

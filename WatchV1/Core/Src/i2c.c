@@ -112,5 +112,17 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 }
 
 /* USER CODE BEGIN 1 */
+void i2c_start()
+{
+  
+}
 
+void i2c_stop()
+{
+
+}
+void i2c_write_byte()
+{
+
+}
 /* USER CODE END 1 */
