@@ -1,0 +1,16 @@
+# 行尾策略：入库一律 LF，检出到工作区统一 CRLF（Windows + Keil / VSCode）
+* text=auto eol=crlf
+
+# 二进制文件：禁止行尾转换
+*.hex    binary
+*.bin    binary
+*.axf    binary
+*.elf    binary
+*.o      binary
+*.a      binary
+*.lib    binary
+*.pdf    binary
+*.png    binary
+*.jpg    binary
+*.gif    binary
+*.zip    binary
