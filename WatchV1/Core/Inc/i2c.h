@@ -35,16 +35,26 @@ extern "C" {
 extern I2C_HandleTypeDef hi2c1;
 
 /* USER CODE BEGIN Private defines */
-
+#define Time_us 5
+#define sda_read HAL_GPIO_ReadPin(SDA_GPIO_Port,SDA_Pin)
 /* USER CODE END Private defines */
 
 void MX_I2C1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-i2c_start();
-i2c_stop();
-i2c_write_byte();
-/* USER CODE END Prototypes */
+// void SDA_H(void);
+// void SDA_L(void);
+// void SCL_H(void);
+// void SCL_L(void);
+void i2c_gpio_init(void);
+void i2c_start(void);
+void i2c_stop(void);
+void i2c_write_byte(uint8_t bit);
+uint8_t i2c_wait_ack(void);
+uint8_t i2c_read_byte(void);
+void i2c_send_ack(void);
+void i2c_send_nack(void);
+ /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
 }
