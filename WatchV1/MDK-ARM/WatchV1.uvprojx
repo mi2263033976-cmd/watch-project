@@ -336,7 +336,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F411xE</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../SEGGER_RTT;../BSP;../BSP/LCD;../ST7789/Inc</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../SEGGER_RTT;../BSP;../BSP/LCD;../ST7789/Inc;..\BSP\Sensor_Humidity_Temp</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -879,6 +879,11 @@
               <FileName>i2c_scan.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\BSP\i2c_scan.c</FilePath>
+            </File>
+            <File>
+              <FileName>aht21.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\BSP\Sensor_Humidity_Temp\aht21.c</FilePath>
             </File>
           </Files>
         </Group>

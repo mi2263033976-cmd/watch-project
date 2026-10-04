@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include "lcd.h"
 #include "i2c_scan.h"
+#include "aht21.h"
 
 /* USER CODE END Includes */
 
@@ -102,7 +103,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   SEGGER_RTT_Init();                       /* 可选：第一次调用会自动初始化 */
   SEGGER_RTT_printf(0, "--- boot ---\r\n");     /* ← 加这句 */
-  HAL_Delay(200);          /* ← 加这句：等 AHT21 上电就绪（手册要求 ≥100ms）*/
+  aht21_init();            /* AHT21 上电等待（HAL_Delay(200) 已搬进驱动） */
 //  I2C_Scan();
 //  uint8_t val = 0xA5;
 //  uint8_t rd  = 0x00;
@@ -120,8 +121,9 @@ int main(void)
 //  SEGGER_RTT_printf(0, "LCD init...\r\n");
 //  LCD_Init();                                            /* ③ 屏初始化 */
 //  SEGGER_RTT_printf(0, "LCD init done\r\n");
-    uint8_t buf[6];
-
+  float t = 0.0f;
+  float h = 0.0f;
+  aht21_err_t err;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -131,57 +133,25 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    //呼叫AHT21
-    i2c_start();
-    i2c_write_byte(0x38 << 1 | 0);   /* 0x70 写地址 */
-    i2c_wait_ack();                  /* 检查返回值！这次开始，每一步都该查 */
-    HAL_Delay(10);
-    i2c_write_byte(0xAC);   i2c_wait_ack();
-    i2c_write_byte(0x33);   i2c_wait_ack();
-    i2c_write_byte(0x00);   i2c_wait_ack();
-    i2c_stop();
-    HAL_Delay(80);                   /* 等测量完成 */
-
-    //准备读温湿度数据
-    i2c_start();
-    i2c_write_byte(0x38 << 1 | 1);   /* 0x71 读地址 */
-    i2c_wait_ack();
-
-    //读取状态字,若Bit[7]为0，表示测量完成
-    for (uint8_t i = 0; i < 6; i++)
+    err = aht21_read_temp_humi(&t, &h);
+    if (err == AHT21_OK)
     {
-        buf[i] = i2c_read_byte();
-        if (i < 5)  i2c_send_ack();     /* 后面还有，继续发 */
-        else        i2c_send_nack();    /* 第 6 个是最后一个（不读 CRC），喊停 */
+        /* RTT 不支持 %f：×10 拆整数打印 —— 这是【显示层】的活儿（驱动只给 float） */
+        int32_t h_x10 = (int32_t)(h * 10.0f);
+        int32_t t_x10 = (int32_t)(t * 10.0f);
+        int32_t t_abs = (t_x10 < 0) ? -t_x10 : t_x10;      /* 负数单独取符号 */
+
+        SEGGER_RTT_printf(0, "H = %d.%d %%   T = %s%d.%d C\r\n",
+                          h_x10 / 10, h_x10 % 10,
+                          (t_x10 < 0) ? "-" : "", t_abs / 10, t_abs % 10);
     }
-    //开始读温湿度数据
-    if( 0x00 == (buf[0] & 0x80) )//Bit[7]为0，表示测量完成
+    else
     {
-      uint32_t data_w = 0;
-      uint32_t data_t = 0;
-      data_w = ((uint32_t)buf[3] >> 4) + ((uint32_t)buf[2] << 4) + ((uint32_t)buf[1] << 12);
-      //float wet_data = data_w * 100.0f / (1 << 20);
-
-      data_t = ((uint32_t)(buf[3] & 0x0F) << 16) + ((uint32_t)buf[4] << 8) + ((uint32_t)buf[5]);
-      //float temperature_data = ( data_t * 200.0f / (1 << 20) ) - 50 ;
-
-
-      
-
-      /* ---- 打印：MicroLIB 不支持 %f，所以放大 10 倍后用整数拆开 ---- */
-      uint32_t wet_x10 = (data_w * 1000u) >> 20;                          /* 湿度 ×10 */
-      int32_t  tem_x10 = (int32_t)((data_t * 2000u) >> 20) - 500;         /* 温度 ×10 = raw×200/2^20 − 50 */
-      int32_t  t_abs   = (tem_x10 < 0) ? -tem_x10 : tem_x10;              /* 负数单独取符号 */
-
-      SEGGER_RTT_printf(0, "H = %d.%d %%   T = %s%d.%d C\r\n",
-                        wet_x10 / 10, wet_x10 % 10,
-                        (tem_x10 < 0) ? "-" : "", t_abs / 10, t_abs % 10);
-
-      SEGGER_RTT_printf(0, "raw: %02X %02X %02X %02X %02X %02X\r\n",
-                        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
-                       // HAL_Delay(2000);
+        SEGGER_RTT_printf(0, "AHT21 err = %d\r\n", err);
     }
-    i2c_stop();
+
+    HAL_Delay(1000);
+     
   }
   /* USER CODE END 3 */
 }
