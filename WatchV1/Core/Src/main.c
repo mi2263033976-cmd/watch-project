@@ -101,7 +101,7 @@ int main(void)
   i2c_gpio_init();         /* ⚠️ 必须留在 USER CODE 区：把 PB7/PB8 覆盖成开漏（放生成区会被 CubeMX 删掉） */
   SEGGER_RTT_Init();                       /* 可选：第一次调用会自动初始化 */
   SEGGER_RTT_printf(0, "--- boot ---\r\n");     /* ← 加这句 */
-  aht21_init();            /* AHT21 上电等待（HAL_Delay(200) 已搬进驱动） */
+
 //  I2C_Scan();
 //  uint8_t val = 0xA5;
 //  uint8_t rd  = 0x00;
@@ -122,6 +122,12 @@ int main(void)
   float t = 0.0f;
   float h = 0.0f;
   aht21_err_t err;
+  aht21_err_t init_err = aht21_init();
+  if (init_err != AHT21_OK)
+  {
+    SEGGER_RTT_printf(0, "AHT21 init FAIL = %d\r\n", init_err);
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */

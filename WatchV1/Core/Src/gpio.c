@@ -38,8 +38,6 @@
         * Output
         * EVENT_OUT
         * EXTI
-     PB7   ------> I2C1_SDA
-     PB8   ------> I2C1_SCL
 */
 void MX_GPIO_Init(void)
 {
@@ -58,7 +56,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LCD_RST_GPIO_Port, LCD_RST_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, LCD_RST_Pin|SDA_Pin|SCL_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : LCD_CS_Pin */
   GPIO_InitStruct.Pin = LCD_CS_Pin;
@@ -76,10 +74,9 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pins : SDA_Pin SCL_Pin */
   GPIO_InitStruct.Pin = SDA_Pin|SCL_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }

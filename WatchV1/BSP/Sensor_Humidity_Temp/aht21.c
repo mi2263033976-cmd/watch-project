@@ -22,9 +22,14 @@ static aht21_err_t aht21_write_checked(uint8_t byte)
 	}
 }
 
+
 aht21_err_t aht21_init(void)
 {
 	HAL_Delay(200); 
+	/* 发一次 START + 写地址 0x38，确认它在不在 */
+	i2c_start();
+	if (aht21_write_checked(0x38 << 1 | 0) != AHT21_OK) return AHT21_ERR_NACK;  
+	i2c_stop();
     return AHT21_OK;
 }
 aht21_err_t aht21_read_temp_humi(float *temp,float *humi)
