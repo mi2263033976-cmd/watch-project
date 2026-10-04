@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "i2c.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -29,8 +28,8 @@
 #include "SEGGER_RTT.h"
 #include <stdio.h>
 #include "lcd.h"
-#include "i2c_scan.h"
 #include "aht21.h"
+#include "soft_i2c.h"
 
 /* USER CODE END Includes */
 
@@ -98,9 +97,8 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   MX_SPI1_Init();
-  MX_I2C1_Init();
-  i2c_gpio_init();
   /* USER CODE BEGIN 2 */
+  i2c_gpio_init();         /* ⚠️ 必须留在 USER CODE 区：把 PB7/PB8 覆盖成开漏（放生成区会被 CubeMX 删掉） */
   SEGGER_RTT_Init();                       /* 可选：第一次调用会自动初始化 */
   SEGGER_RTT_printf(0, "--- boot ---\r\n");     /* ← 加这句 */
   aht21_init();            /* AHT21 上电等待（HAL_Delay(200) 已搬进驱动） */

@@ -1,6 +1,6 @@
 #include "aht21.h"
 #include "main.h"
-#include "i2c.h"
+#include "soft_i2c.h"
 
 /* 写一个字节 + 检查应答（私有助手） */
 static aht21_err_t aht21_write_checked(uint8_t byte)
