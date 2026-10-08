@@ -23,6 +23,7 @@ static aht21_err_t aht21_write_checked(uint8_t byte)
 }
 
 
+/* 初始化：等 AHT21 上电就绪，再发一次"写地址"，靠从机 ACK 确认器件在线 */
 aht21_err_t aht21_init(void)
 {
 	HAL_Delay(200); 
@@ -32,6 +33,9 @@ aht21_err_t aht21_init(void)
 	i2c_stop();
     return AHT21_OK;
 }
+/* 读一次温湿度（五步）：参数检查 → 触发测量 → 读 6 字节 → 状态位校验 → 拼接+换算
+ * 出参：*temp = ℃，*humi = %RH（物理量归驱动，排版归上层）
+ * 失败路径：先 i2c_stop() 释放总线，再 return 错误码 */
 aht21_err_t aht21_read_temp_humi(float *temp,float *humi)
 {
 	uint8_t buf[6];

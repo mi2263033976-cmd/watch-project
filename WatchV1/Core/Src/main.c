@@ -132,6 +132,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  /* app 层：这里只做"取一份数据 + 显示" —— 缓存 / 重试 / 状态都归 handler 层（W4）*/
   while (1)
   {
     /* USER CODE END WHILE */

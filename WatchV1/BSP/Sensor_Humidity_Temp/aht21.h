@@ -10,8 +10,8 @@ typedef enum{
     AHT21_ERR_PARAM,    /* 传进来的指针是 NULL */
 } aht21_err_t;
 
-aht21_err_t aht21_init(void);
-aht21_err_t aht21_read_temp_humi(float *temp,float *humi);
+aht21_err_t aht21_init(void);                                  /* 上电等待 + 在线检查（写地址看 ACK）   */
+aht21_err_t aht21_read_temp_humi(float *temp,float *humi);     /* 读一次温湿度 → ℃ / %RH（五步内部完成）*/
 
 
 #endif

@@ -44,14 +44,12 @@ static void stub_reset(void)
 }
 
 /* =========================================================================
- * 用例 ①：连续失败 → OFFLINE
+ * 用例 · 连续失败 → OFFLINE
  *
  *   设定：桩一直报 NACK（喂足够多次，保证 handler 内部重试也拿不到 OK）
  *   动作：连调 handler 5 次
  *   期望：第 5 次之后，状态 = AHT21_H_OFFLINE
  * =======================================================================*/
-
-#define OFFLINE_AFTER 5   /* ⚠️ 这个 5 属于 handler 的规则，将来该由 aht21_handler.h 暴露 */
 
 static void test_case_1_offline_after_failures(void)
 {
@@ -63,7 +61,7 @@ static void test_case_1_offline_after_failures(void)
     stub_read_err   = AHT21_ERR_NACK;   /* 设定：报 NACK */
     stub_fail_times = 100;              /* 设定：一直报，别中途"恢复" */
 
-    for (i = 0; i < OFFLINE_AFTER; i++) /* 动作 */
+    for (i = 0; i < AHT21_H_OFFLINE_THRESHOLD; i++) /* 动作 */
     {
         st = aht21_handler_read(&t, &h);
     }
@@ -81,11 +79,12 @@ static void handler_prime(void)
     float t = 0.0f, h = 0.0f;
 
     stub_reset();          /* 桩侧：恢复成"一直成功" */
-    /* TODO: handler 侧 —— 调一次，让它回到"在线 + 手里有数据" */
+
+    aht21_handler_read(&t, &h); 
 }
 
 /* =========================================================================
- * 用例 ②：一直读到 → 一直 H_OK
+ * 用例 · 一直读到 → 一直 H_OK
  *
  *   设定：桩一直成功（25.6 / 60.0）—— 复位之后本来就是
  *   期望：每次都是 H_OK，且数据就是桩给的那份
@@ -95,17 +94,22 @@ static void test_case_always_ok(void)
     float t = 0.0f, h = 0.0f;
     aht21_handler_status_t st = AHT21_H_OK;
     int i;
-
+    int bad = 0;
     handler_prime();
 
-    /* TODO ①：还需要动哪根遥控杆吗？（复位后就是一直成功）
-     * TODO ②：连读 3 次 —— 只 CHECK 最后一次够不够？怎么写才不留死角？
-     * TODO ③：顺手验数据：t / h 应等于桩给的 25.6 / 60.0
-     */
+    for(i = 0; i < 3; i++)
+    {
+        st = aht21_handler_read(&t, &h);
+        if (st != AHT21_H_OK)
+        {bad ++;}
+    }
+    CHECK(bad == 0, "连读 3 次都应为 OK");
+    CHECK(t == 25.6f && h == 60.0f, "数据应是桩给的 25.6 / 60.0");
+
 }
 
 /* =========================================================================
- * 用例 ③：先建立缓存 → 再短暂失败 → STALE，且给出【上次的】数据
+ * 用例 · 先建立缓存 → 再短暂失败 → STALE，且给出【上次的】数据
  * =======================================================================*/
 static void test_case_stale_keeps_cached_data(void)
 {
@@ -115,16 +119,18 @@ static void test_case_stale_keeps_cached_data(void)
 
     handler_prime();       /* ← 这一步就已经建好缓存了（它内部成功过一次） */
 
-    /* TODO ①：把桩掰成【失败】：动哪两根遥控杆？喂几次？
-     * TODO ②：连调 3 次，记最后一次的状态
-     * TODO ③：CHECK 状态 == AHT21_H_STALE
-     * TODO ④：再 CHECK 数据 —— t / h 仍应是 25.6 / 60.0
-     *          （这一条才是"缓存真的缓了"的证据，别漏）
-     */
+    stub_read_err   = AHT21_ERR_NACK;   
+    stub_fail_times = 100;              
+    for(i = 0; i < 3; i++)
+    {
+        st = aht21_handler_read(&t, &h);
+    }
+    CHECK(st == AHT21_H_STALE, "失败 3 次 → 应为 STALE");
+    CHECK(t == 25.6f && h == 60.0f, "STALE 时给出的应是上次那份数据(25.6 / 60.0)");
 }
 
 /* =========================================================================
- * 用例 ④⑤：OFFLINE → 器件恢复 → 回到 OK → 再失败 → STALE
+ * 用例 · OFFLINE → 器件恢复 → 回到 OK → 再失败 → STALE
  *
  *   这两步天生连着（中间不能停），所以写在同一个函数里。
  *   ⑤ 的意义：证明 g_fail_count 真的被清零了 —— 否则一失败就该立刻 OFFLINE。
@@ -135,13 +141,27 @@ static void test_case_recovery_and_reset(void)
     aht21_handler_status_t st = AHT21_H_OK;
     int i;
 
-    /* TODO ①：造 OFFLINE（照用例① 的写法：报 NACK + 喂够次数 + 连调 5 次）
-     * TODO ②：让桩"恢复"—— 遥控杆里哪个变量管"还剩几次失败"？
-     *          把它摆成 0 会怎样？（这就是"器件治好了"的演法）
-     * TODO ③：调一次 → CHECK(st == AHT21_H_OK, "器件恢复 → 状态回到 OK")
-     * TODO ④：再让桩失败 3 次 → 调 3 次
-     *          → CHECK(st == AHT21_H_STALE, "计数已清零：再失败 3 次只是 STALE")
-     */
+    handler_prime();
+
+    stub_read_err   = AHT21_ERR_NACK;   
+    stub_fail_times = 100;      
+
+    for(i = 0; i < AHT21_H_OFFLINE_THRESHOLD; i++)
+    {
+        st = aht21_handler_read(&t, &h);
+    }
+
+    stub_fail_times = 0;
+    st = aht21_handler_read(&t, &h);
+    CHECK(st == AHT21_H_OK, "器件恢复 → 状态应回到 OK");
+
+    stub_read_err   = AHT21_ERR_NACK;   
+    stub_fail_times = 100;      
+    for(i = 0; i < 3; i++)
+    {
+        st = aht21_handler_read(&t, &h);
+    }
+    CHECK(st == AHT21_H_STALE, "计数已清零：恢复后再失败 3 次 → 只该是 STALE");
 }
 
 /* =========================================================================*/

@@ -9,6 +9,9 @@
   */
 #include "soft_i2c.h"
 
+/* ── 位操作助手 ──────────────────────────────────────────────────────
+ *   开漏输出下：「写 1」= 释放引脚（高由上拉电阻给），「写 0」= 主动拉低
+ */
 static void SDA_H(void) {HAL_GPIO_WritePin(SDA_GPIO_Port,SDA_Pin,GPIO_PIN_SET);}
 static void SDA_L(void) {HAL_GPIO_WritePin(SDA_GPIO_Port,SDA_Pin,GPIO_PIN_RESET);}
 static void SCL_H(void) {HAL_GPIO_WritePin(SCL_GPIO_Port,SCL_Pin,GPIO_PIN_SET);}
@@ -31,6 +34,7 @@ static void DWT_CycleCounter_Init(void)
     DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;             /* 开周期计数器 */
 }
 
+/* 一次性初始化：PB7/PB8 配成开漏 + 上拉，启动 DWT 计数器，总线置空闲（两线都释放） */
 void i2c_gpio_init(void)
 {
     GPIO_InitTypeDef gpio = {0};
@@ -53,6 +57,7 @@ void i2c_gpio_init(void)
     SDA_H();                            /* 空闲态：两条线都释放（= 高） */
 }
 
+/* START：SCL 保持高时，SDA 由高→低跳变（只有"SCL 高期间的跳变"才算事件） */
 void i2c_start(void)
 {
   SDA_H();
@@ -65,6 +70,7 @@ void i2c_start(void)
   I2C_DelayUs(Time_us);
 }
 
+/* STOP：SCL 保持高时，SDA 由低→高跳变（之前先趁 SCL 低把 SDA 压好） */
 void i2c_stop(void)
 {
 SCL_L();
@@ -75,7 +81,7 @@ I2C_DelayUs(Time_us);
 SDA_H();   /* ★ SCL 高时释放 = STOP */
 I2C_DelayUs(Time_us);
 }
-//发送一个字节
+/* 主机发一个字节：MSB 先出；SCL 低时换数据，SCL 高时从机采样 */
 void i2c_write_byte(uint8_t data)
 {
   uint8_t i;
@@ -92,7 +98,7 @@ void i2c_write_byte(uint8_t data)
   SCL_L();
   I2C_DelayUs(Time_us);
 }
-//判断ACK,0继续，1停止
+/* 读从机应答：主机先释放 SDA（开漏写 1），再抬 SCL 采样 → 0 = ACK，非 0 = NACK */
 uint8_t i2c_wait_ack(void)
 {
   uint8_t ack;
@@ -107,6 +113,7 @@ uint8_t i2c_wait_ack(void)
   return ack;
 }
 
+/* 主机读一个字节：MSB 先入；读完停在 SCL 低，ACK/NACK 由调用者发 */
 uint8_t i2c_read_byte(void)
 {
   uint8_t byte = 0 ;
@@ -123,6 +130,7 @@ uint8_t i2c_read_byte(void)
   return byte;
 }
 
+/* ACK：拉低 SDA = 告诉从机"继续发" */
 void i2c_send_ack()
 {
   SCL_L();
@@ -133,6 +141,7 @@ void i2c_send_ack()
   SCL_L();
   I2C_DelayUs(Time_us);
 }
+/* NACK：释放 SDA = 告诉从机"停"，读最后一个字节时用 */
 void i2c_send_nack()
 {
   SCL_L();
