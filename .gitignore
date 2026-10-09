@@ -12,9 +12,9 @@
 *.sct
 *.build_log.htm
 *.uvguix.*
-MDK-ARM/DebugConfig/
-MDK-ARM/RTE/_*/
-MDK-ARM/WatchV1/
+WatchV1/MDK-ARM/DebugConfig/
+WatchV1/MDK-ARM/RTE/_*/
+WatchV1/MDK-ARM/WatchV1/
 EventRecorderStub.scvd
 
 # 软件资料包（310M，不入库）
