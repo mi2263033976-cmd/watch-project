@@ -30,6 +30,7 @@
 #include "lcd.h"
 #include "aht21.h"
 #include "soft_i2c.h"
+#include "aht21_handler.h"
 
 /* USER CODE END Includes */
 
@@ -62,7 +63,20 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* 打印一次温湿度：RTT 不支持 %f → ×10 拆整数（这是【显示层】的活儿）
+ * tag：数据新鲜度标注 —— "" = 新鲜；" [stale]" = 用的是上次缓存 */
+static void print_temp_humi(float t, float h, const char *tag)
+{
 
+	int32_t h_x10 = (int32_t)(h * 10.0f);
+		int32_t t_x10 = (int32_t)(t * 10.0f);
+		int32_t t_abs = (t_x10 < 0) ? -t_x10 : t_x10;      /* 负数单独取符号 */
+	
+	SEGGER_RTT_printf(0, "H = %d.%d %%   T = %s%d.%d C%s\r\n",
+						h_x10 / 10, h_x10 % 10,
+							(t_x10 < 0) ? "-" : "", t_abs / 10, t_abs % 10,
+              tag);
+}
 /* USER CODE END 0 */
 
 /**
@@ -119,9 +133,11 @@ int main(void)
 //  SEGGER_RTT_printf(0, "LCD init...\r\n");
 //  LCD_Init();                                            /* ③ 屏初始化 */
 //  SEGGER_RTT_printf(0, "LCD init done\r\n");
+
   float t = 0.0f;
   float h = 0.0f;
-  aht21_err_t err;
+  aht21_handler_status_t hs;      /* 取代原来的 aht21_err_t err */
+
   aht21_err_t init_err = aht21_init();
   if (init_err != AHT21_OK)
   {
@@ -138,26 +154,35 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    err = aht21_read_temp_humi(&t, &h);
-    if (err == AHT21_OK)
-    {
-        /* RTT 不支持 %f：×10 拆整数打印 —— 这是【显示层】的活儿（驱动只给 float） */
-        int32_t h_x10 = (int32_t)(h * 10.0f);
-        int32_t t_x10 = (int32_t)(t * 10.0f);
-        int32_t t_abs = (t_x10 < 0) ? -t_x10 : t_x10;      /* 负数单独取符号 */
+	hs = aht21_handler_read(&t, &h);
 
-        SEGGER_RTT_printf(0, "H = %d.%d %%   T = %s%d.%d C\r\n",
-                          h_x10 / 10, h_x10 % 10,
-                          (t_x10 < 0) ? "-" : "", t_abs / 10, t_abs % 10);
-    }
-    else
-    {
-        SEGGER_RTT_printf(0, "AHT21 err = %d\r\n", err);
-    }
-
-    HAL_Delay(1000);
-     
+	switch (hs)
+	{
+		case AHT21_H_OK:
+			/* 新鲜数据：照老样子打印 */
+		print_temp_humi(t, h, "");          /* 新鲜数据 */
+			break;
+	
+		case AHT21_H_STALE:
+			/* 旧数据：数据照样打，后面加个标记 */
+			/* 旧数据：照打，只多一个 [stale] 标注 */
+		print_temp_humi(t, h, " [stale]");  /* 这次没读到 → 给的是上次缓存 */
+			break;
+	
+		case AHT21_H_OFFLINE:
+			SEGGER_RTT_printf(0, "AHT21 OFFLINE\r\n");
+			break;
+	
+		case AHT21_H_PARAM:
+			SEGGER_RTT_printf(0, "AHT21 param error\r\n");
+			break;
+	
+		default:
+			break;
+	}
+	HAL_Delay(1000);
   }
+
   /* USER CODE END 3 */
 }
 
