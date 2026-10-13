@@ -8,6 +8,7 @@
   ******************************************************************************
   */
 #include "soft_i2c.h"
+#include <stdint.h>
 
 /* ── 位操作助手 ──────────────────────────────────────────────────────
  *   开漏输出下：「写 1」= 释放引脚（高由上拉电阻给），「写 0」= 主动拉低
@@ -151,4 +152,57 @@ void i2c_send_nack()
   I2C_DelayUs(Time_us);
   SCL_L();
   I2C_DelayUs(Time_us);
+}
+
+static uint8_t i2c_mem_checked(uint8_t byte)
+{
+  i2c_write_byte(byte);
+  if(0 != i2c_wait_ack())
+	{
+	  i2c_stop();
+	  return 1;
+	}
+  	else
+	{
+		return 0;
+	}
+}
+
+uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len)
+{  
+  if (len == 0) return 1;            //防止len=0;
+
+  i2c_start();
+  if (i2c_mem_checked(dev7 << 1 | 0) != 0) return 1;
+  if (i2c_mem_checked(reg) != 0) return 1;
+
+
+  for (uint8_t i = 0 ; i < len; i++)
+  {
+    if (i2c_mem_checked(buf[i]) != 0) return 1;
+  }
+  i2c_stop();
+  return 0;
+
+}
+uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t *buf, uint8_t len)
+{
+  if (len == 0) return 1;            //防止len=0;
+
+  i2c_start();
+  if (i2c_mem_checked(dev7 << 1 | 0) != 0) return 1;
+  if (i2c_mem_checked(reg) != 0) return 1;
+
+  i2c_start();
+  if (i2c_mem_checked(dev7 << 1 | 1) != 0) return 1;
+
+  for (uint8_t i = 0; i < len; i++)
+	{
+	  buf[i] = i2c_read_byte();
+	  if (i < len - 1)  i2c_send_ack();     /* 还有 → 主机回 ACK */
+	  else          i2c_send_nack();    /* 最后一个 → 主机喊停 */
+	}
+	i2c_stop();
+  return 0;
+
 }

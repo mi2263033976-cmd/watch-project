@@ -31,6 +31,7 @@
 #include "aht21.h"
 #include "soft_i2c.h"
 #include "aht21_handler.h"
+#include "mpu6050.h"
 
 /* USER CODE END Includes */
 
@@ -41,7 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MPU6050_ADDR7              0x68
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -65,18 +66,51 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 /* 打印一次温湿度：RTT 不支持 %f → ×10 拆整数（这是【显示层】的活儿）
  * tag：数据新鲜度标注 —— "" = 新鲜；" [stale]" = 用的是上次缓存 */
-static void print_temp_humi(float t, float h, const char *tag)
-{
+//static void print_temp_humi(float t, float h, const char *tag)
+//{
 
-	int32_t h_x10 = (int32_t)(h * 10.0f);
-		int32_t t_x10 = (int32_t)(t * 10.0f);
-		int32_t t_abs = (t_x10 < 0) ? -t_x10 : t_x10;      /* 负数单独取符号 */
-	
-	SEGGER_RTT_printf(0, "H = %d.%d %%   T = %s%d.%d C%s\r\n",
-						h_x10 / 10, h_x10 % 10,
-							(t_x10 < 0) ? "-" : "", t_abs / 10, t_abs % 10,
-              tag);
+//	int32_t h_x10 = (int32_t)(h * 10.0f);
+//		int32_t t_x10 = (int32_t)(t * 10.0f);
+//		int32_t t_abs = (t_x10 < 0) ? -t_x10 : t_x10;      /* 负数单独取符号 */
+//	
+//	SEGGER_RTT_printf(0, "H = %d.%d %%   T = %s%d.%d C%s\r\n",
+//						h_x10 / 10, h_x10 % 10,
+//							(t_x10 < 0) ? "-" : "", t_abs / 10, t_abs % 10,
+//              tag);
+//}
+/* ── MPU6050 显示层（RTT 没有 %f，浮点要自己拆）────────────────── */
+
+/* 把一个 float 按 ×10 打成 "名字=±整数.小数"
+ *   套路同 W4：先取绝对值再拆，符号单独打（负数 % 在 C 里是负数） */
+static void rtt_print_f10(const char *name, float v)
+{
+    int32_t x10 = (int32_t)(v * 10.0f);
+    int32_t a   = (x10 < 0) ? -x10 : x10;
+
+    SEGGER_RTT_printf(0, "%s=%s%d.%d ", name,
+                      (x10 < 0) ? "-" : "", (int)(a / 10), (int)(a % 10));
 }
+
+/* 打印一次 6 轴 + 温度：raw 与换算值都打
+ *   raw 用 %d 直接打 —— 它是核对"地址自增"和"量程配对"的原始证据
+ *   （az 应在 16384 附近；换算 az_g 应在 1.0 附近） */
+static void print_mpu6050(const mpu6050_data_t *d)
+{
+    SEGGER_RTT_printf(0, "RAW  ax=%6d ay=%6d az=%6d temp=%6d gx=%6d gy=%6d gz=%6d\r\n",
+                      d->raw.ax, d->raw.ay, d->raw.az, d->raw.temp,
+                      d->raw.gx, d->raw.gy, d->raw.gz);
+
+    SEGGER_RTT_printf(0, "CONV ");
+    rtt_print_f10("ax",   d->conv.ax_g);
+    rtt_print_f10("ay",   d->conv.ay_g);
+    rtt_print_f10("az",   d->conv.az_g);
+    rtt_print_f10("temp", d->conv.temp_c);
+    rtt_print_f10("gx",   d->conv.gx_dps);
+    rtt_print_f10("gy",   d->conv.gy_dps);
+    rtt_print_f10("gz",   d->conv.gz_dps);
+    SEGGER_RTT_printf(0, "\r\n");
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -112,9 +146,21 @@ int main(void)
   MX_TIM3_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  i2c_gpio_init();         /* ⚠️ 必须留在 USER CODE 区：把 PB7/PB8 覆盖成开漏（放生成区会被 CubeMX 删掉） */
-  SEGGER_RTT_Init();                       /* 可选：第一次调用会自动初始化 */
-  SEGGER_RTT_printf(0, "--- boot ---\r\n");     /* ← 加这句 */
+  i2c_gpio_init();         /* ⚠️ 必须留在 USER CODE 区：把 PB6/PB7 覆盖成开漏（放生成区会被 CubeMX 删掉） */
+
+  SEGGER_RTT_Init();                            /* 先把日志起起来（下面才好打） */
+  SEGGER_RTT_printf(0, "--- boot ---\r\n");
+
+  /* MPU6050 上电初始化 —— 【开机只做一次】
+   *   ⚠️ 它内部会复位器件 ⇒ 放进主循环 = 每秒把器件打回睡眠
+   *   失败要打【错误码】：1=NACK（总线不通） 2=ID 不符（不是 6050） 3=BUSY（复位没等到） */
+  mpu6050_err_t init_ret = mpu6050_init();
+  if (init_ret != MPU6050_OK)
+  {
+    SEGGER_RTT_printf(0, "MPU6050 init fail = %d\r\n", init_ret);
+  }
+
+  mpu6050_data_t mpu;      /* 出参实例：栈上开一次，主循环里反复复用 */
 
 //  I2C_Scan();
 //  uint8_t val = 0xA5;
@@ -134,52 +180,64 @@ int main(void)
 //  LCD_Init();                                            /* ③ 屏初始化 */
 //  SEGGER_RTT_printf(0, "LCD init done\r\n");
 
-  float t = 0.0f;
-  float h = 0.0f;
-  aht21_handler_status_t hs;      /* 取代原来的 aht21_err_t err */
+  // float t = 0.0f;
+  // float h = 0.0f;
+  // aht21_handler_status_t hs;      /* 取代原来的 aht21_err_t err */
 
-  aht21_err_t init_err = aht21_init();
-  if (init_err != AHT21_OK)
-  {
-    SEGGER_RTT_printf(0, "AHT21 init FAIL = %d\r\n", init_err);
-  }
+  // aht21_err_t init_err = aht21_init();
+  // if (init_err != AHT21_OK)
+  // {
+  //   SEGGER_RTT_printf(0, "AHT21 init FAIL = %d\r\n", init_err);
+  // }
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  /* app 层：这里只做"取一份数据 + 显示" —— 缓存 / 重试 / 状态都归 handler 层（W4）*/
+
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	hs = aht21_handler_read(&t, &h);
 
-	switch (hs)
-	{
-		case AHT21_H_OK:
-			/* 新鲜数据：照老样子打印 */
-		print_temp_humi(t, h, "");          /* 新鲜数据 */
-			break;
+    /* 读一次 6 轴 + 温度（失败别静默 —— 打出错误码） */
+    mpu6050_err_t rd = mpu6050_read(&mpu);
+    if (rd == MPU6050_OK)
+    {
+      print_mpu6050(&mpu);
+    }
+    else
+    {
+      SEGGER_RTT_printf(0, "MPU6050 read fail = %d\r\n", rd);
+    }
+
+	// hs = aht21_handler_read(&t, &h);
+
+	// switch (hs)
+	// {
+	// 	case AHT21_H_OK:
+	// 		/* 新鲜数据：照老样子打印 */
+	// 	print_temp_humi(t, h, "");          /* 新鲜数据 */
+	// 		break;
 	
-		case AHT21_H_STALE:
-			/* 旧数据：数据照样打，后面加个标记 */
-			/* 旧数据：照打，只多一个 [stale] 标注 */
-		print_temp_humi(t, h, " [stale]");  /* 这次没读到 → 给的是上次缓存 */
-			break;
+	// 	case AHT21_H_STALE:
+	// 		/* 旧数据：数据照样打，后面加个标记 */
+	// 		/* 旧数据：照打，只多一个 [stale] 标注 */
+	// 	print_temp_humi(t, h, " [stale]");  /* 这次没读到 → 给的是上次缓存 */
+	// 		break;
 	
-		case AHT21_H_OFFLINE:
-			SEGGER_RTT_printf(0, "AHT21 OFFLINE\r\n");
-			break;
+	// 	case AHT21_H_OFFLINE:
+	// 		SEGGER_RTT_printf(0, "AHT21 OFFLINE\r\n");
+	// 		break;
 	
-		case AHT21_H_PARAM:
-			SEGGER_RTT_printf(0, "AHT21 param error\r\n");
-			break;
+	// 	case AHT21_H_PARAM:
+	// 		SEGGER_RTT_printf(0, "AHT21 param error\r\n");
+	// 		break;
 	
-		default:
-			break;
-	}
+	// 	default:
+	// 		break;
+	// }
 	HAL_Delay(1000);
   }
 

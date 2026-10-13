@@ -27,5 +27,8 @@ uint8_t i2c_wait_ack(void);            /* 读从机应答：0 = ACK，非 0 = NA
 uint8_t i2c_read_byte(void);           /* 主机读 1 字节（MSB 先入）              */
 void i2c_send_ack(void);               /* 主机应答"还要"（拉低 SDA）            */
 void i2c_send_nack(void);              /* 主机应答"不要了"（释放 SDA）          */
+uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t       *buf, uint8_t len);
+uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len);
+
 
 #endif /* __SOFT_I2C_H__ */
