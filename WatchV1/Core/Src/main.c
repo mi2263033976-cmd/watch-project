@@ -32,6 +32,7 @@
 #include "soft_i2c.h"
 #include "aht21_handler.h"
 #include "mpu6050.h"
+#include "mpu6050_handler.h"
 
 /* USER CODE END Includes */
 
@@ -93,8 +94,8 @@ static void rtt_print_f10(const char *name, float v)
 
 /* 打印一次 6 轴 + 温度：raw 与换算值都打
  *   raw 用 %d 直接打 —— 它是核对"地址自增"和"量程配对"的原始证据
- *   （az 应在 16384 附近；换算 az_g 应在 1.0 附近） */
-static void print_mpu6050(const mpu6050_data_t *d)
+ * tag：数据新鲜度标注 —— "" = 新鲜；" [stale]" = 用的是上次缓存 */
+static void print_mpu6050(const mpu6050_data_t *d, const char *tag)
 {
     SEGGER_RTT_printf(0, "RAW  ax=%6d ay=%6d az=%6d temp=%6d gx=%6d gy=%6d gz=%6d\r\n",
                       d->raw.ax, d->raw.ay, d->raw.az, d->raw.temp,
@@ -108,7 +109,7 @@ static void print_mpu6050(const mpu6050_data_t *d)
     rtt_print_f10("gx",   d->conv.gx_dps);
     rtt_print_f10("gy",   d->conv.gy_dps);
     rtt_print_f10("gz",   d->conv.gz_dps);
-    SEGGER_RTT_printf(0, "\r\n");
+    SEGGER_RTT_printf(0, "%s\r\n", tag);
 }
 
 /* USER CODE END 0 */
@@ -150,6 +151,8 @@ int main(void)
 
   SEGGER_RTT_Init();                            /* 先把日志起起来（下面才好打） */
   SEGGER_RTT_printf(0, "--- boot ---\r\n");
+
+  mpu6050_handler_set_delay(HAL_Delay);      /* ← 把平台的延时接给 handler */
 
   /* MPU6050 上电初始化 —— 【开机只做一次】
    *   ⚠️ 它内部会复位器件 ⇒ 放进主循环 = 每秒把器件打回睡眠
@@ -201,15 +204,33 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    /* 读一次 6 轴 + 温度（失败别静默 —— 打出错误码） */
-    mpu6050_err_t rd = mpu6050_read(&mpu);
-    if (rd == MPU6050_OK)
+    /* 读一次 6 轴 + 温度 —— 走 handler：它负责缓存与状态判定
+     *   正常          → H_OK    新鲜数据，照打
+     *   连续失败 < 5  → H_STALE 给上次缓存，标注 [stale]
+     *   连续失败 ≥ 5  → H_OFFLINE 旧数据已撤，明确报失联
+     *   参数错        → H_PARAM   （本处不会触发） */
+    mpu6050_handler_status_t hs = mpu6050_handler_read(&mpu);
+
+    switch (hs)
     {
-      print_mpu6050(&mpu);
-    }
-    else
-    {
-      SEGGER_RTT_printf(0, "MPU6050 read fail = %d\r\n", rd);
+      case MPU6050_H_OK:
+        print_mpu6050(&mpu, "");
+        break;
+ 
+      case MPU6050_H_STALE:
+        print_mpu6050(&mpu, " [stale]");
+        break;
+
+      case MPU6050_H_OFFLINE:
+        SEGGER_RTT_printf(0, "MPU6050 OFFLINE\r\n");
+        break;
+
+      case MPU6050_H_PARAM:
+        SEGGER_RTT_printf(0, "MPU6050 param error\r\n");
+        break;
+
+      default:
+        break;
     }
 
 	// hs = aht21_handler_read(&t, &h);
