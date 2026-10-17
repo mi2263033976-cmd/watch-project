@@ -165,6 +165,9 @@ int main(void)
 
   mpu6050_data_t mpu;      /* 出参实例：栈上开一次，主循环里反复复用 */
 
+  /* 打印限流用（放 while 外面 —— 放循环体里每次都"看起来"重置，骗读代码的人）*/
+  static uint32_t last_print_ms = 0;
+
 //  I2C_Scan();
 //  uint8_t val = 0xA5;
 //  uint8_t rd  = 0x00;
@@ -203,63 +206,76 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+      /* 中断驱动：有新数据才读（标志由 HAL_GPIO_EXTI_Callback → notify() 置）
+       *   没新数据      → H_NO_DATA 不读、不打，立刻下一圈
+       *   正常          → H_OK      新鲜数据，照打
+       *   连续失败 < 5  → H_STALE   给上次缓存，标注 [stale]
+       *   连续失败 ≥ 5  → H_OFFLINE 旧数据已撤，明确报失联
+       *   参数错        → H_PARAM   （本处不会触发） */
+      mpu6050_handler_status_t hs = mpu6050_handler_read_if_new(&mpu);
 
-    /* 读一次 6 轴 + 温度 —— 走 handler：它负责缓存与状态判定
-     *   正常          → H_OK    新鲜数据，照打
-     *   连续失败 < 5  → H_STALE 给上次缓存，标注 [stale]
-     *   连续失败 ≥ 5  → H_OFFLINE 旧数据已撤，明确报失联
-     *   参数错        → H_PARAM   （本处不会触发） */
-    mpu6050_handler_status_t hs = mpu6050_handler_read(&mpu);
+      if (MPU6050_H_NO_DATA == hs)
+      {
+        continue;                       /* ← 最常走的路：没新数据 */
+      }
 
-    switch (hs)
-    {
-      case MPU6050_H_OK:
-        print_mpu6050(&mpu, "");
-        break;
- 
-      case MPU6050_H_STALE:
-        print_mpu6050(&mpu, " [stale]");
-        break;
+      /* 打印限流：中断 100Hz，不能每次打（否则 1 秒 100 行刷屏）
+       *   ⚠️ 只拦"打印"，不拦"读" —— 若让主循环变慢，标志又会恒为 1 ⇒ 退回轮询 */
+      if ((HAL_GetTick() - last_print_ms) < 200)
+      {
+        continue;
+      }
+      last_print_ms = HAL_GetTick();
 
-      case MPU6050_H_OFFLINE:
-        SEGGER_RTT_printf(0, "MPU6050 OFFLINE\r\n");
-        break;
+      switch (hs)
+      {
+        case MPU6050_H_OK:
+          print_mpu6050(&mpu, "");
+          break;
+      
+        case MPU6050_H_STALE:
+          print_mpu6050(&mpu, " [stale]");
+          break;
 
-      case MPU6050_H_PARAM:
-        SEGGER_RTT_printf(0, "MPU6050 param error\r\n");
-        break;
+        case MPU6050_H_OFFLINE:
+          SEGGER_RTT_printf(0, "MPU6050 OFFLINE\r\n");
+          break;
 
-      default:
-        break;
-    }
+        case MPU6050_H_PARAM:
+          SEGGER_RTT_printf(0, "MPU6050 param error\r\n");
+          break;
 
-	// hs = aht21_handler_read(&t, &h);
+        default:
+          break;
+      }
 
-	// switch (hs)
-	// {
-	// 	case AHT21_H_OK:
-	// 		/* 新鲜数据：照老样子打印 */
-	// 	print_temp_humi(t, h, "");          /* 新鲜数据 */
-	// 		break;
-	
-	// 	case AHT21_H_STALE:
-	// 		/* 旧数据：数据照样打，后面加个标记 */
-	// 		/* 旧数据：照打，只多一个 [stale] 标注 */
-	// 	print_temp_humi(t, h, " [stale]");  /* 这次没读到 → 给的是上次缓存 */
-	// 		break;
-	
-	// 	case AHT21_H_OFFLINE:
-	// 		SEGGER_RTT_printf(0, "AHT21 OFFLINE\r\n");
-	// 		break;
-	
-	// 	case AHT21_H_PARAM:
-	// 		SEGGER_RTT_printf(0, "AHT21 param error\r\n");
-	// 		break;
-	
-	// 	default:
-	// 		break;
-	// }
-	HAL_Delay(1000);
+	    // hs = aht21_handler_read(&t, &h);
+
+	    // switch (hs)
+	    // {
+	    // 	case AHT21_H_OK:
+	    // 		/* 新鲜数据：照老样子打印 */
+	    // 	print_temp_humi(t, h, "");          /* 新鲜数据 */
+	    // 		break;
+
+	    // 	case AHT21_H_STALE:
+	    // 		/* 旧数据：数据照样打，后面加个标记 */
+	    // 		/* 旧数据：照打，只多一个 [stale] 标注 */
+	    // 	print_temp_humi(t, h, " [stale]");  /* 这次没读到 → 给的是上次缓存 */
+	    // 		break;
+
+	    // 	case AHT21_H_OFFLINE:
+	    // 		SEGGER_RTT_printf(0, "AHT21 OFFLINE\r\n");
+	    // 		break;
+
+	    // 	case AHT21_H_PARAM:
+	    // 		SEGGER_RTT_printf(0, "AHT21 param error\r\n");
+	    // 		break;
+
+	    // 	default:
+	    // 		break;
+	    // }
+    
   }
 
   /* USER CODE END 3 */
@@ -315,7 +331,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
     if (GPIO_Pin == GPIO_PIN_5)
     {
-
+      mpu6050_handler_notify();
     }
 }
 /* USER CODE END 4 */

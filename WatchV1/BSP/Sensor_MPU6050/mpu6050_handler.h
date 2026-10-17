@@ -31,7 +31,8 @@ typedef enum {
     MPU6050_H_OK = 0,
     MPU6050_H_STALE,
     MPU6050_H_OFFLINE,
-    MPU6050_H_PARAM
+    MPU6050_H_PARAM,
+    MPU6050_H_NO_DATA
 } mpu6050_handler_status_t;
 
 /* ② 对外函数 —— app 一次调用拿到「一整包 6 轴 + 温度」＋状态
@@ -46,5 +47,9 @@ mpu6050_handler_status_t mpu6050_handler_read(mpu6050_data_t *out);
  *   不注入 = 默认空实现（不延时）*/
 void mpu6050_handler_set_delay(void (*fn)(uint32_t ms));
 
+/*收集中断的通知*/
+void mpu6050_handler_notify(void);
+
+mpu6050_handler_status_t mpu6050_handler_read_if_new(mpu6050_data_t *out);
 
 #endif /* __MPU6050_HANDLER_H__ */

@@ -28,6 +28,8 @@ static uint8_t          g_has_data   = 0;     /* 0 = 从没成功过；1 = 手�
  *   ⇒ 这样 handler 依然【零 HAL 依赖】，PC 单测照跑。 */
 static void delay_noop(uint32_t ms) { (void)ms; }
 static void (*g_delay_ms)(uint32_t ms) = delay_noop;
+/*中断数据*/
+static volatile uint8_t g_new_data = 0 ;
 
 void mpu6050_handler_set_delay(void (*fn)(uint32_t ms))
 {
@@ -122,4 +124,40 @@ mpu6050_handler_status_t mpu6050_handler_read(mpu6050_data_t *out)
     *out = g_last;
 
     return MPU6050_H_STALE;
+}
+
+void mpu6050_handler_notify(void)
+{
+    g_new_data = 1;
+}
+
+/* read_if_new —— "有新数据才读"（中断驱动的取货入口）
+ *
+ *   分工：notify() 只置标志（ISR 调）；本函数负责取货 + 清标志（主循环调）。
+ *
+ *   ⚠️ 为什么【无论成败都清】标志：
+ *     · 中断驱动下，"下一次机会" = 下一次中断（100Hz ⇒ 10ms 后），
+ *       而不是"下一圈主循环"（微秒级）—— 在主循环里立刻重试 = 忙等
+ *     · 失败还把标志留着 ⇒ 主循环空转狂调 read（每次自带 3 次重试 + 1ms 延时）
+ *       ⇒ CPU 被吃干、日志被刷爆
+ *     · 丢一份数据不要紧：下一份 10ms 就到
+ *
+ *   ⚠️ 已知代价（尚未补）：器件被拔掉后中断不再来，标志停在 0，
+ *      本函数只会返回 NO_DATA ⇒ app 看不到 OFFLINE。
+ *      要判"失联"得另加超时（W6 记的账）。
+ */
+mpu6050_handler_status_t mpu6050_handler_read_if_new(mpu6050_data_t *out)
+{
+    mpu6050_handler_status_t st;
+
+    if (0 == g_new_data)              /* 没新数据：一步都不往下走 */
+    {
+        return MPU6050_H_NO_DATA;
+    }
+
+    st = mpu6050_handler_read(out);   /* 老函数一个字不动 */
+
+    g_new_data = 0;
+
+    return st;
 }
