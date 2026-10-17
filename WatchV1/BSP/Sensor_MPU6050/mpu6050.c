@@ -33,15 +33,15 @@
 #define MPU6050_REG_ACCEL_CONFIG   0x1C   /* 加速度计配置：AFS_SEL[4:3] 选量程     */
 #define MPU6050_REG_ACCEL_XOUT_H   0x3B   /* ★ 数据包起点：从此连读 14 字节         */
 #define MPU6050_REG_PWR_MGMT_1     0x6B   /* 电源管理 1：复位 / 睡眠 / 温度 / 时钟源 */
-#define MPU6050_REG_SMPRT_DIV      0x19   /* 采样率分频器                         */
+#define MPU6050_REG_SMPLRT_DIV      0x19   /* 采样率分频器                         */
 #define MPU6050_REG_CONFIG         0x1A   /* 滤波配置                            */
 #define MPU6050_REG_WHO_AM_I       0x75   /* 只读：自报家门                        */
 
 /* ── ③ 寄存器取值（要写进去的值 / 要对比的期望值）──────────────── */
 #define MPU6050_GYRO_CONFIG_GEAR   0x18   /* FS_SEL=3 → ±2000 °/s ←配 GYRO_SENS    */
 #define MPU6050_ACCEL_CONFIG_GEAR  0x00   /* AFS_SEL=0 → ±2g      ←配 ACCEL_SENS   */
-#define MPU6050_SMPRT_DIV_GEAR     0x09   /* SMPRT_DIV = 9                         */
-#define MPU6050_CONFIG_GEAR        0x04   /* EXT_SYNC_SET=0(不设置内部采样)，DLPF = 4 */
+#define MPU6050_SMPLRT_DIV_GEAR     0x09   /* SMPLRT_DIV = 9                         */
+#define MPU6050_CONFIG_GEAR        0x04   /* EXT_SYNC_SET=0(FSYNC 外部同步输入禁用)，DLPF_CFG = 4 */
 #define MPU6050_PWR_MGMT_1_RESET   0x80   /* 置 bit7 DEVICE_RESET：软复位器件       */
 #define MPU6050_PWR_MGMT_1_WAKE    0x00   /* 清 bit6 SLEEP：唤醒（顺带开温度）      */
 #define MPU6050_WHO_AM_I_VALUE     0x68   /* WHO_AM_I 期望值（与 AD0 无关）         */
@@ -93,12 +93,12 @@ mpu6050_err_t mpu6050_init(void)
     if (i2c_mem_write(MPU6050_ADDR7, MPU6050_REG_PWR_MGMT_1, &val, 1) != 0)
         return MPU6050_ERR_NACK;
 
-    /*滤波的配置：DLPF_CFG = 4，SMPRT_DIV = 9，采样率 = 100Hz */
+    /*滤波的配置：DLPF_CFG = 4，SMPLRT_DIV = 9，采样率 = 100Hz */
     val = MPU6050_CONFIG_GEAR;
     if (i2c_mem_write(MPU6050_ADDR7, MPU6050_REG_CONFIG, &val, 1) != 0)
         return MPU6050_ERR_NACK;
-    val = MPU6050_SMPRT_DIV_GEAR;
-    if (i2c_mem_write(MPU6050_ADDR7, MPU6050_REG_SMPRT_DIV, &val, 1) != 0)
+    val = MPU6050_SMPLRT_DIV_GEAR;
+    if (i2c_mem_write(MPU6050_ADDR7, MPU6050_REG_SMPLRT_DIV, &val, 1) != 0)
         return MPU6050_ERR_NACK;
 
     /* 配置陀螺仪和加速度计 */
@@ -122,12 +122,12 @@ mpu6050_err_t mpu6050_init(void)
     //滤波和采样
     if (i2c_mem_read(MPU6050_ADDR7, MPU6050_REG_CONFIG, &val, 1) != 0)
         return MPU6050_ERR_NACK;
-    SEGGER_RTT_printf(0, "GYRO_CONFIG  = 0x%02X (wrote  0x%02X)\r\n",
+    SEGGER_RTT_printf(0, "CONFIG       = 0x%02X (wrote  0x%02X)\r\n",
                       val, MPU6050_CONFIG_GEAR);
-    if (i2c_mem_read(MPU6050_ADDR7, MPU6050_REG_SMPRT_DIV, &val, 1) != 0)
+    if (i2c_mem_read(MPU6050_ADDR7, MPU6050_REG_SMPLRT_DIV, &val, 1) != 0)
         return MPU6050_ERR_NACK;
-    SEGGER_RTT_printf(0, "ACCEL_CONFIG = 0x%02X (wrote  0x%02X)\r\n",
-                      val, MPU6050_SMPRT_DIV_GEAR);
+    SEGGER_RTT_printf(0, "SMPLRT_DIV   = 0x%02X (wrote  0x%02X)\r\n",
+                      val, MPU6050_SMPLRT_DIV_GEAR);
                  
     /* ④ 验真身 */
     if (i2c_mem_read(MPU6050_ADDR7, MPU6050_REG_WHO_AM_I, &id, 1) != 0)
