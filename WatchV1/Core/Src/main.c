@@ -311,7 +311,13 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_5)
+    {
 
+    }
+}
 /* USER CODE END 4 */
 
 /**
