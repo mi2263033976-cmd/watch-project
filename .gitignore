@@ -25,3 +25,6 @@ EventRecorderStub.scvd
 *.uvoptx
 JLinkLog.txt
 JLinkSettings.ini
+
+# UV4 命令行构建日志（-o build.log 生成）
+*.log
