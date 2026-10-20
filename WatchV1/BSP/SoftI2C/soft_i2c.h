@@ -16,6 +16,11 @@
 #define Time_us 5
 #define sda_read HAL_GPIO_ReadPin(SDA_GPIO_Port,SDA_Pin)
 
+/* 7 位地址里能自由分给从机的一段（0x00 = 广播、0x78~0x7F = 10 位前缀，都不能扫）。
+ * 扫描循环的边界和日志文案都从这里取，别各写一份。 */
+#define I2C_ADDR7_SCAN_MIN 0x08
+#define I2C_ADDR7_SCAN_MAX 0x77
+
 /* ── 时序层对外接口：上层只认这些"动作"，不碰 GPIO ───────────────────
  *   典型用法：START → 写地址 → 等 ACK → 写/读字节 → … → STOP
  */
@@ -37,4 +42,5 @@ uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len
 
 uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len);  /* 命令式读，末字节自动 NACK；0=成功 */
 uint8_t i2c_ping(uint8_t dev7);                                   /* 探活：0=在线，非 0=无应答 */
+uint8_t i2c_scan(uint8_t *found, uint8_t max);   /* 普查 0x08~0x77；返回找到的个数 */
 #endif /* __SOFT_I2C_H__ */

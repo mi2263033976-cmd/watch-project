@@ -170,6 +170,17 @@ int main(void)
   /* 打印限流用（放 while 外面 —— 放循环体里每次都"看起来"重置，骗读代码的人）*/
   static uint32_t last_print_ms = 0;
 
+  /*  I2C器件扫描   */
+  uint8_t found[8];
+  uint8_t n = i2c_scan(found, sizeof(found));
+
+  SEGGER_RTT_printf(0, "[SCAN] scanned 0x%02X~0x%02X, found %d\r\n",
+                    I2C_ADDR7_SCAN_MIN, I2C_ADDR7_SCAN_MAX, (int)n);
+  for (uint8_t i = 0; i < n && i < sizeof(found); i++)
+  {
+    SEGGER_RTT_printf(0, "[SCAN] found 0x%02X\r\n", found[i]);
+  }
+
 //  I2C_Scan();
 //  uint8_t val = 0xA5;
 //  uint8_t rd  = 0x00;

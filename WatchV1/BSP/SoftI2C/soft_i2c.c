@@ -239,3 +239,19 @@ uint8_t i2c_ping(uint8_t dev7)
   i2c_stop();
   return 0;
 }
+
+/* 普查：把 I2C_ADDR7_SCAN_MIN~I2C_ADDR7_SCAN_MAX 里所有有应答的地址写进 found[]，返回个数。
+ * 不扫 0x00（通用广播）和 0x78~0x7F（10 位地址前缀）；边界见 soft_i2c.h。 */
+uint8_t i2c_scan(uint8_t *found, uint8_t max)
+{
+  uint8_t num = 0;
+  for(uint8_t addr = I2C_ADDR7_SCAN_MIN; addr <= I2C_ADDR7_SCAN_MAX; addr++)
+  {
+    if(i2c_ping(addr) == 0)
+    {
+      if (num < max) found[num] = addr;   /* 缓冲满了也继续数，便于发现"挂太多" */
+      num++;
+    }
+  }
+  return num;
+}
