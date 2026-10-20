@@ -28,3 +28,6 @@ JLinkSettings.ini
 
 # UV4 命令行构建日志（-o build.log 生成）
 *.log
+
+# 我加的临时备份（2026-10-20 起不入库）
+*.bak-*

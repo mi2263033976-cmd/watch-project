@@ -154,6 +154,9 @@ void i2c_send_nack()
   I2C_DelayUs(Time_us);
 }
 
+/* 私有助手：发一字节并查应答。
+ * ⚠️ 契约：NACK 时【本函数内部已经 i2c_stop()】，调用方不要再补 stop。
+ *    好处 = 失败必定释放总线；代价 = 调用点看不到这个副作用，改前先读这里。 */
 static uint8_t i2c_mem_checked(uint8_t byte)
 {
   i2c_write_byte(byte);
@@ -205,4 +208,34 @@ uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t *buf, uint8_t len)
 	i2c_stop();
   return 0;
 
+}
+
+/* 命令式器件：START → 读地址 → 连读 len 字节（末字节 NACK）→ STOP。
+ * 失败时 STOP 已由 i2c_mem_checked 发出；返回值 0=成功。 */
+uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len)  /* 0=成功 */
+{
+  if(len == 0) return 1;
+
+  i2c_start();
+  if (i2c_mem_checked(dev7 << 1 | 1) != 0) return 1;
+
+  for (uint8_t i = 0; i < len; i++)
+	{
+	  buf[i] = i2c_read_byte();
+	  if (i < len - 1)  i2c_send_ack();     /* 还有 → 主机回 ACK */
+	  else          i2c_send_nack();    /* 最后一个 → 主机喊停 */
+	}
+	i2c_stop();
+  return 0;
+
+}
+
+/* 探活：START → 设备地址 → 查 ACK。0=在线。
+ * 无应答时 STOP 已由 i2c_mem_checked 发出（见上面的契约）。 */
+uint8_t i2c_ping(uint8_t dev7)
+{
+  i2c_start();
+  if (i2c_mem_checked(dev7 << 1 | 0) != 0) return 1;
+  i2c_stop();
+  return 0;
 }

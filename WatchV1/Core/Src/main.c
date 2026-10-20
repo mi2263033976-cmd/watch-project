@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -59,6 +60,7 @@
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -186,17 +188,21 @@ int main(void)
 //  LCD_Init();                                            /* ③ 屏初始化 */
 //  SEGGER_RTT_printf(0, "LCD init done\r\n");
 
-  // float t = 0.0f;
-  // float h = 0.0f;
-  // aht21_handler_status_t hs;      /* 取代原来的 aht21_err_t err */
+  
 
-  // aht21_err_t init_err = aht21_init();
-  // if (init_err != AHT21_OK)
-  // {
-  //   SEGGER_RTT_printf(0, "AHT21 init FAIL = %d\r\n", init_err);
-  // }
-
+ 
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -212,42 +218,42 @@ int main(void)
        *   连续失败 < 5  → H_STALE   给上次缓存，标注 [stale]
        *   连续失败 ≥ 5  → H_OFFLINE 旧数据已撤，明确报失联
        *   参数错        → H_PARAM   （本处不会触发） */
-      mpu6050_handler_status_t hs = mpu6050_handler_read_if_new(&mpu);
+      // mpu6050_handler_status_t hs = mpu6050_handler_read_if_new(&mpu);
 
-      if (MPU6050_H_NO_DATA == hs)
-      {
-        continue;                       /* ← 最常走的路：没新数据 */
-      }
+      // if (MPU6050_H_NO_DATA == hs)
+      // {
+      //   continue;                       /* ← 最常走的路：没新数据 */
+      // }
 
-      /* 打印限流：中断 100Hz，不能每次打（否则 1 秒 100 行刷屏）
-       *   ⚠️ 只拦"打印"，不拦"读" —— 若让主循环变慢，标志又会恒为 1 ⇒ 退回轮询 */
-      if ((HAL_GetTick() - last_print_ms) < 200)
-      {
-        continue;
-      }
-      last_print_ms = HAL_GetTick();
+      // /* 打印限流：中断 100Hz，不能每次打（否则 1 秒 100 行刷屏）
+      //  *   ⚠️ 只拦"打印"，不拦"读" —— 若让主循环变慢，标志又会恒为 1 ⇒ 退回轮询 */
+      // if ((HAL_GetTick() - last_print_ms) < 200)
+      // {
+      //   continue;
+      // }
+      // last_print_ms = HAL_GetTick();
 
-      switch (hs)
-      {
-        case MPU6050_H_OK:
-          print_mpu6050(&mpu, "");
-          break;
+      // switch (hs)
+      // {
+      //   case MPU6050_H_OK:
+      //     print_mpu6050(&mpu, "");
+      //     break;
       
-        case MPU6050_H_STALE:
-          print_mpu6050(&mpu, " [stale]");
-          break;
+      //   case MPU6050_H_STALE:
+      //     print_mpu6050(&mpu, " [stale]");
+      //     break;
 
-        case MPU6050_H_OFFLINE:
-          SEGGER_RTT_printf(0, "MPU6050 OFFLINE\r\n");
-          break;
+      //   case MPU6050_H_OFFLINE:
+      //     SEGGER_RTT_printf(0, "MPU6050 OFFLINE\r\n");
+      //     break;
 
-        case MPU6050_H_PARAM:
-          SEGGER_RTT_printf(0, "MPU6050 param error\r\n");
-          break;
+      //   case MPU6050_H_PARAM:
+      //     SEGGER_RTT_printf(0, "MPU6050 param error\r\n");
+      //     break;
 
-        default:
-          break;
-      }
+      //   default:
+      //     break;
+      // }
 
 	    // hs = aht21_handler_read(&t, &h);
 

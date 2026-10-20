@@ -27,8 +27,14 @@ uint8_t i2c_wait_ack(void);            /* 读从机应答：0 = ACK，非 0 = NA
 uint8_t i2c_read_byte(void);           /* 主机读 1 字节（MSB 先入）              */
 void i2c_send_ack(void);               /* 主机应答"还要"（拉低 SDA）            */
 void i2c_send_nack(void);              /* 主机应答"不要了"（释放 SDA）          */
+/* ── 器件级接口（本层补的原语，失败时总线均已释放）────────────────────
+ *   i2c_mem_* = 寄存器式器件（EEPROM / MPU6050）：先发 reg，再读写数据
+ *   i2c_read_bytes = 命令式器件（AHT21 之类）：无 reg，直接读 N 字节
+ *   i2c_ping  = 只探活：发设备地址看有没有应答
+ */
 uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t       *buf, uint8_t len);
 uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len);
 
-
+uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len);  /* 命令式读，末字节自动 NACK；0=成功 */
+uint8_t i2c_ping(uint8_t dev7);                                   /* 探活：0=在线，非 0=无应答 */
 #endif /* __SOFT_I2C_H__ */
