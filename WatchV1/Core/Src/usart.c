@@ -21,10 +21,11 @@
 #include "usart.h"
 
 /* USER CODE BEGIN 0 */
-
+#include "SEGGER_RTT.h"
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USART1 init function */
 
@@ -80,6 +81,28 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+    /* USART1 DMA Init */
+    /* USART1_RX Init */
+    hdma_usart1_rx.Instance = DMA2_Stream2;
+    hdma_usart1_rx.Init.Channel = DMA_CHANNEL_4;
+    hdma_usart1_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_usart1_rx.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_usart1_rx.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_usart1_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_usart1_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_usart1_rx.Init.Mode = DMA_CIRCULAR;
+    hdma_usart1_rx.Init.Priority = DMA_PRIORITY_LOW;
+    hdma_usart1_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_usart1_rx) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(uartHandle,hdmarx,hdma_usart1_rx);
+
+    /* USART1 interrupt Init */
+    HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
   /* USER CODE BEGIN USART1_MspInit 1 */
 
   /* USER CODE END USART1_MspInit 1 */
@@ -103,6 +126,11 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
     */
     HAL_GPIO_DeInit(GPIOA, GPIO_PIN_9|GPIO_PIN_10);
 
+    /* USART1 DMA DeInit */
+    HAL_DMA_DeInit(uartHandle->hdmarx);
+
+    /* USART1 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(USART1_IRQn);
   /* USER CODE BEGIN USART1_MspDeInit 1 */
 
   /* USER CODE END USART1_MspDeInit 1 */
@@ -110,5 +138,93 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
+#define UART_RX_BUF_SIZE  256          /* 软件环：任务从这里取（2 的幂，靠 & 回绕） */
+#define DMA_RX_SIZE       256          /* 硬件环：DMA 的临时落脚点，每次事件必须清空 */
+static uint8_t dma_buf[DMA_RX_SIZE];       /* DMA 直接往里写，不能用局部变量 */
+
+static uint8_t  g_rx_buf[UART_RX_BUF_SIZE];   /* 环形区：唯一写者是 rx_push */
+static volatile uint16_t g_rx_wr = 0;         /* 写指针：异步上下文（DMA 事件）独占 */
+static uint16_t g_rx_rd = 0;                  /* 读指针：任务独占 */
+static uint32_t g_rx_overflow = 0;            /* 溢出累计（任务写、任务读） */
+static uint32_t g_evt_lost   = 0;             /* Size==last 的事件数：非零 ⇒ 有整圈被盖 */
+
+/* 启动接收。返回 HAL 状态 —— 调用者必须检查，否则启动失败只会表现为 total 一直是 0 */
+HAL_StatusTypeDef uart_rx_start(void)
+{
+    return HAL_UARTEx_ReceiveToIdle_DMA(&huart1, dma_buf, DMA_RX_SIZE);
+}
+
+/* 写软件环的唯一入口：换搬运工时只改调用者，不改这里 */
+static void rx_push(uint8_t b)
+{
+    g_rx_buf[g_rx_wr & (UART_RX_BUF_SIZE - 1)] = b;
+    g_rx_wr++;
+}
+
+/* 溢出修正：读指针落后超过一整圈 ⇒ 追不回的丢掉并记账。
+ * 只有任务会写 g_rx_rd，所以本函数只能在任务上下文调用。 */
+static void rx_drop_if_overflow(void)
+{
+    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    if (avail > UART_RX_BUF_SIZE) {
+        g_rx_overflow += (uint32_t)(avail - UART_RX_BUF_SIZE);
+        g_rx_rd = (uint16_t)(g_rx_wr - UART_RX_BUF_SIZE);   /* 停在活着的最老数据上 */
+    }
+}
+
+static uint16_t g_last_pos = 0;   /* 上一次事件的坐标：只有本回调碰它 */
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+    if (huart->Instance != USART1)
+    {
+        return;
+    }
+
+    if (Size > g_last_pos)                     /* 没跨圈：一段 */
+    {
+        for (uint16_t i = g_last_pos; i < Size; i++)
+        {
+            rx_push(dma_buf[i]);
+        }
+    }
+    else if (Size < g_last_pos)                /* 跨圈：两段，第二段终点就是 Size 本身 */
+    {
+        for (uint16_t i = g_last_pos; i < DMA_RX_SIZE; i++)
+        {
+            rx_push(dma_buf[i]);
+        }
+        for (uint16_t i = 0; i < Size; i++)
+        {
+            rx_push(dma_buf[i]);
+        }
+    }
+    else                                       /* Size == last：零字节，但不是"没事发生" */
+    {
+        g_evt_lost++;                          /* 可能是整整转了一圈、数据全被盖 ⇒ 留痕 */
+    }
+
+    g_last_pos = Size;
+}
+
+uint16_t uart_rx_read(uint8_t *dst, uint16_t max)
+{
+    rx_drop_if_overflow();                     /* ① 进来先清债 */
+
+    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    if (avail > max) avail = max;              /* ② 接口带长度、内部截断 */
+
+    for (uint16_t i = 0; i < avail; i++)
+    {
+        dst[i] = g_rx_buf[g_rx_rd & (UART_RX_BUF_SIZE - 1)];
+        g_rx_rd++;
+    }
+
+    rx_drop_if_overflow();                     /* ③ 拷贝这几百 µs 里又溢出了，再修一次 */
+    return avail;
+}
+
+uint32_t uart_rx_overflow(void) { return g_rx_overflow; }
+uint32_t uart_rx_evt_lost(void) { return g_evt_lost; }
 
 /* USER CODE END 1 */

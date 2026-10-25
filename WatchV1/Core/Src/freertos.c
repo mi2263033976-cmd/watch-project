@@ -28,6 +28,8 @@
 #include "SEGGER_RTT.h"
 #include "aht21.h"
 #include "aht21_handler.h"
+#include "usart.h"
+#include "string.h"
 
 /* USER CODE END Includes */
 
@@ -49,6 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 TaskHandle_t sensorTaskHandle = NULL;   /* sensorTask 句柄（动态创建，失败时为 NULL） */
+static uint32_t total = 0;              /* 累计收到的字节数：证据，不靠人眼 */
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -129,11 +132,33 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
+  static uint8_t  buf[256];          /* 任务侧取数据的落脚点，static：不占任务栈 */
+  static uint32_t last_print = 0;
+  (void)argument;
+
+  /* 检查返回值：启动失败时 total 会一直是 0，光看接线找不到原因 */
+  HAL_StatusTypeDef rx_st = uart_rx_start();
+  if (rx_st != HAL_OK) {
+    SEGGER_RTT_printf(0, "[ERR] uart_rx_start st=%d\r\n", (int)rx_st);
+  }
+
   for(;;)
   {
-    SEGGER_RTT_printf(0, "test\r\n");
-    osDelay(1000);
+    uint16_t n = uart_rx_read(buf, sizeof(buf));
+    if (n > 0)
+    {
+      total += n;
+      uint32_t now = xTaskGetTickCount();          /* 1 tick = 1 ms */
+      if((now - last_print) >= 1000)               /* 1 s 汇总一次，别把 RTT 顶爆 */
+      {
+        last_print = now;
+        SEGGER_RTT_printf(0, "n=%u total=%u ovf=%u lost=%u\r\n",
+                          (unsigned)n, (unsigned)total,
+                          (unsigned)uart_rx_overflow(), (unsigned)uart_rx_evt_lost());
+        SEGGER_RTT_printf(0, "buf[0]=%02X buf[n-1]=%02X\r\n", (unsigned)buf[0], (unsigned)buf[n-1]);
+      }
+    }
+    osDelay(20);
   }
   /* USER CODE END StartDefaultTask */
 }

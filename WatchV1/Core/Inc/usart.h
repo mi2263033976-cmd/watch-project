@@ -41,7 +41,10 @@ extern UART_HandleTypeDef huart1;
 void MX_USART1_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+HAL_StatusTypeDef uart_rx_start(void);   /* 返回 HAL 状态，调用者必须检查 */
+uint16_t uart_rx_read(uint8_t *dst, uint16_t max);
+uint32_t uart_rx_overflow(void);         /* 软件环累计丢了多少字节 */
+uint32_t uart_rx_evt_lost(void);         /* Size==last 的事件数（非零 ⇒ 有整圈被覆盖） */
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
