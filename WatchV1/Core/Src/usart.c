@@ -22,6 +22,7 @@
 
 /* USER CODE BEGIN 0 */
 #include "SEGGER_RTT.h"
+
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
@@ -148,11 +149,25 @@ static uint16_t g_rx_rd = 0;                  /* 读指针：任务独占 */
 static uint32_t g_rx_overflow = 0;            /* 溢出累计（任务写、任务读） */
 static uint32_t g_evt_lost   = 0;             /* Size==last 的事件数：非零 ⇒ 有整圈被盖 */
 
+/*队列 */
+#define RX_EVT_Q_LEN   8                       /* 队列深度 */
+static QueueHandle_t g_rx_q = NULL;             /* 队列句柄：任务读、事件写 */
+
 /* 启动接收。返回 HAL 状态 —— 调用者必须检查，否则启动失败只会表现为 total 一直是 0 */
 HAL_StatusTypeDef uart_rx_start(void)
 {
+    if( NULL == g_rx_q)      
+    {
+        g_rx_q = xQueueCreate(RX_EVT_Q_LEN, sizeof(uint16_t));
+        if( NULL == g_rx_q)
+        {
+            return HAL_ERROR;        /* 防止重复调用把队列建两份 */
+        }
+    }
     return HAL_UARTEx_ReceiveToIdle_DMA(&huart1, dma_buf, DMA_RX_SIZE);
 }
+
+QueueHandle_t uart_rx_queue(void) { return g_rx_q; }   /* 消费者拿句柄 */
 
 /* 写软件环的唯一入口：换搬运工时只改调用者，不改这里 */
 static void rx_push(uint8_t b)
@@ -202,6 +217,29 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     else                                       /* Size == last：零字节，但不是"没事发生" */
     {
         g_evt_lost++;                          /* 可能是整整转了一圈、数据全被盖 ⇒ 留痕 */
+    }
+
+    /* 算出数据放入到队列中 */
+    uint16_t data = 0;  /* 事件数据：本回调里累加，最后一次性发给任务 */
+    if (Size >= g_last_pos) 
+    {
+        data = (uint16_t)(Size - g_last_pos);                 /* 没跨圈（相等时 = 0） */
+    } 
+    else 
+    {
+        data = (uint16_t)(DMA_RX_SIZE - g_last_pos + Size);   /* 跨圈 */
+    }
+    
+    for (uint16_t i = 0; i < data; i++) 
+    {
+        rx_push(dma_buf[(g_last_pos + i) & (DMA_RX_SIZE - 1)]);   /* 掩码自带回绕 */
+    }
+
+    if (data > 0) 
+    {
+        BaseType_t woken = pdFALSE;
+        xQueueSendFromISR(g_rx_q, &data, &woken);
+        portYIELD_FROM_ISR(woken);      /* 如果这一下唤醒了更高优先级的任务，立刻切 */
     }
 
     g_last_pos = Size;

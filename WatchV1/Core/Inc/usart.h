@@ -29,7 +29,9 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
 /* USER CODE END Includes */
 
 extern UART_HandleTypeDef huart1;
@@ -45,6 +47,7 @@ HAL_StatusTypeDef uart_rx_start(void);   /* 返回 HAL 状态，调用者必须�
 uint16_t uart_rx_read(uint8_t *dst, uint16_t max);
 uint32_t uart_rx_overflow(void);         /* 软件环累计丢了多少字节 */
 uint32_t uart_rx_evt_lost(void);         /* Size==last 的事件数（非零 ⇒ 有整圈被覆盖） */
+QueueHandle_t uart_rx_queue(void);       /* 消费者拿队列句柄 */
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

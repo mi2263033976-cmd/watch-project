@@ -30,7 +30,7 @@
 #include "aht21_handler.h"
 #include "usart.h"
 #include "string.h"
-
+#include "queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,6 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 TaskHandle_t sensorTaskHandle = NULL;   /* sensorTask 句柄（动态创建，失败时为 NULL） */
+TaskHandle_t rxTaskHandle = NULL;       /* RxTask 句柄（动态创建，失败时为 NULL） */
 static uint32_t total = 0;              /* 累计收到的字节数：证据，不靠人眼 */
 
 /* USER CODE END Variables */
@@ -65,7 +66,7 @@ const osThreadAttr_t defaultTask_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 static void StartSensorTask(void *argument);
-
+static void StartRxTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -114,6 +115,15 @@ void MX_FREERTOS_Init(void) {
     SEGGER_RTT_printf(0, "[ERR] sensorTask create failed, ret=%d\r\n", (int)ret);
   }
 
+  BaseType_t ret2 = xTaskCreate(StartRxTask,       
+                               "RxTask",          
+                               256,                   
+                               NULL,                  
+                               tskIDLE_PRIORITY + 4,  
+                               &rxTaskHandle);    
+   if (ret2 != pdPASS) {
+    SEGGER_RTT_printf(0, "[ERR] RxTask create failed, ret2=%d\r\n", (int)ret2);
+  }                            
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -206,7 +216,36 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName)
     for (;;) { }        /* 停在这里，等 Ozone 接上 */
 }
 
+static void StartRxTask(void *argument)
+{
+  (void)argument;
+  static uint8_t buf[256];
+  static uint32_t total = 0;
 
+  QueueHandle_t q = uart_rx_queue();
+  while (NULL == q)                 /* 队列没建好就等 */
+  {
+    vTaskDelay(pdMS_TO_TICKS(10));
+    q = uart_rx_queue();
+  }
+
+  for(;;)
+  {
+    uint16_t evt = 0;       /*evt 只当"叫醒服务"*/
+    if(xQueueReceive(q,&evt,portMAX_DELAY) == pdTRUE) /*portMAX_DELAY：没事件就一直睡，不占 CPU、不轮询。*/
+    {
+      uint16_t n = uart_rx_read(buf,sizeof(buf)); /* 用环里的avail */
+
+      if(n > 0)
+      {
+        total += n;
+        SEGGER_RTT_printf(0, "evt=%u n=%u total=%u ovf=%u lost=%u\r\n",
+                                  (unsigned)evt, (unsigned)n, (unsigned)total,
+                                  (unsigned)uart_rx_overflow(), (unsigned)uart_rx_evt_lost());
+      }
+    }
+  }
+}
 
 /* USER CODE END Application */
 
