@@ -147,21 +147,39 @@ static uint8_t  g_rx_buf[UART_RX_BUF_SIZE];   /* 环形区：唯一写者是 rx_
 static volatile uint16_t g_rx_wr = 0;         /* 写指针：异步上下文（DMA 事件）独占 */
 static uint16_t g_rx_rd = 0;                  /* 读指针：任务独占 */
 static uint32_t g_rx_overflow = 0;            /* 溢出累计（任务写、任务读） */
-static uint32_t g_evt_lost   = 0;             /* Size==last 的事件数：非零 ⇒ 有整圈被盖 */
+static uint32_t g_evt_lost   = 0;             /* 零增量(Size==last)事件次数：**未知量，不等于圈数**。
+                                               * 非零 = ISR 被饿死过（HT/TC 都没及时到）；此时"从哪开始"
+                                               * 已不可信，只能报警，不能拿它算账。 */
+static uint32_t g_evt_qfull  = 0;             /* 队列满、事件没发出去的次数：数据仍在环里 */
 
 /*队列 */
 #define RX_EVT_Q_LEN   8                       /* 队列深度 */
-static QueueHandle_t g_rx_q = NULL;             /* 队列句柄：任务读、事件写 */
+static QueueHandle_t g_rx_q = NULL;             /* 队列句柄：事件写、任务读 */
 
-/* 启动接收。返回 HAL 状态 —— 调用者必须检查，否则启动失败只会表现为 total 一直是 0 */
-HAL_StatusTypeDef uart_rx_start(void)
+/* 只建队列，不碰硬件。**应在调度器启动前调用**（freertos.c 的 RTOS_QUEUES 区）：
+ * 任务首次运行之前 DMA 就可能来中断，句柄为 NULL 时往里发事件 = 访问空指针。 */
+HAL_StatusTypeDef uart_rx_init(void)
 {
-    if( NULL == g_rx_q)      
+    if (NULL == g_rx_q)
     {
         g_rx_q = xQueueCreate(RX_EVT_Q_LEN, sizeof(uint16_t));
-        if( NULL == g_rx_q)
+        if (NULL == g_rx_q)
         {
-            return HAL_ERROR;        /* 防止重复调用把队列建两份 */
+            return HAL_ERROR;        /* 堆不够：必须报出来 */
+        }
+    }
+    return HAL_OK;
+}
+
+/* 启动 DMA 接收。返回 HAL 状态 —— 调用者必须检查，否则启动失败只表现为 total 一直是 0 */
+HAL_StatusTypeDef uart_rx_start(void)
+{
+    if (NULL == g_rx_q)              /* 兜底：没先 init 就自己建，绝不带着空句柄启 DMA */
+    {
+        HAL_StatusTypeDef st = uart_rx_init();
+        if (HAL_OK != st)
+        {
+            return st;
         }
     }
     return HAL_UARTEx_ReceiveToIdle_DMA(&huart1, dma_buf, DMA_RX_SIZE);
@@ -196,50 +214,35 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
         return;
     }
 
-    if (Size > g_last_pos)                     /* 没跨圈：一段 */
-    {
-        for (uint16_t i = g_last_pos; i < Size; i++)
-        {
-            rx_push(dma_buf[i]);
-        }
-    }
-    else if (Size < g_last_pos)                /* 跨圈：两段，第二段终点就是 Size 本身 */
-    {
-        for (uint16_t i = g_last_pos; i < DMA_RX_SIZE; i++)
-        {
-            rx_push(dma_buf[i]);
-        }
-        for (uint16_t i = 0; i < Size; i++)
-        {
-            rx_push(dma_buf[i]);
-        }
-    }
-    else                                       /* Size == last：零字节，但不是"没事发生" */
-    {
-        g_evt_lost++;                          /* 可能是整整转了一圈、数据全被盖 ⇒ 留痕 */
-    }
-
-    /* 算出数据放入到队列中 */
-    uint16_t data = 0;  /* 事件数据：本回调里累加，最后一次性发给任务 */
-    if (Size >= g_last_pos) 
+    /* 本次事件的增量：Size 是坐标，跨圈时做 +N 修正 */
+    uint16_t data;
+    if (Size >= g_last_pos)
     {
         data = (uint16_t)(Size - g_last_pos);                 /* 没跨圈（相等时 = 0） */
-    } 
-    else 
+    }
+    else
     {
         data = (uint16_t)(DMA_RX_SIZE - g_last_pos + Size);   /* 跨圈 */
     }
-    
-    for (uint16_t i = 0; i < data; i++) 
-    {
-        rx_push(dma_buf[(g_last_pos + i) & (DMA_RX_SIZE - 1)]);   /* 掩码自带回绕 */
-    }
 
-    if (data > 0) 
+    if (data > 0)
     {
+        /* 只搬这一次：掩码自带回绕，不需要分成"没跨圈/跨圈"两套循环 */
+        for (uint16_t i = 0; i < data; i++)
+        {
+            rx_push(dma_buf[(g_last_pos + i) & (DMA_RX_SIZE - 1)]);
+        }
+
         BaseType_t woken = pdFALSE;
-        xQueueSendFromISR(g_rx_q, &data, &woken);
-        portYIELD_FROM_ISR(woken);      /* 如果这一下唤醒了更高优先级的任务，立刻切 */
+        if (xQueueSendFromISR(g_rx_q, &data, &woken) != pdTRUE)
+        {
+            g_evt_qfull++;                 /* 队列满：丢的是"通知"，数据还在环里 ⇒ 留痕 */
+        }
+        portYIELD_FROM_ISR(woken);         /* 唤醒的任务优先级更高就立刻切 */
+    }
+    else
+    {
+        g_evt_lost++;                      /* 零增量：可能是整整转了一圈、数据全被盖 */
     }
 
     g_last_pos = Size;
@@ -264,5 +267,6 @@ uint16_t uart_rx_read(uint8_t *dst, uint16_t max)
 
 uint32_t uart_rx_overflow(void) { return g_rx_overflow; }
 uint32_t uart_rx_evt_lost(void) { return g_evt_lost; }
+uint32_t uart_rx_evt_qfull(void) { return g_evt_qfull; }
 
 /* USER CODE END 1 */

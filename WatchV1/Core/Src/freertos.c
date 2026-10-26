@@ -52,14 +52,14 @@
 /* USER CODE BEGIN Variables */
 TaskHandle_t sensorTaskHandle = NULL;   /* sensorTask 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t rxTaskHandle = NULL;       /* RxTask 句柄（动态创建，失败时为 NULL） */
-static uint32_t total = 0;              /* 累计收到的字节数：证据，不靠人眼 */
+
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 128,
   .priority = (osPriority_t) osPriorityNormal,
 };
 
@@ -96,7 +96,11 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  /* 队列在调度器启动前建好：DMA 中断可能早于任何任务首次运行，
+   * 句柄为 NULL 时往队列发事件 = 访问空指针。 */
+  if (uart_rx_init() != HAL_OK) {
+    SEGGER_RTT_printf(0, "[ERR] uart_rx_init failed (heap?)\r\n");
+  }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -142,33 +146,15 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  static uint8_t  buf[256];          /* 任务侧取数据的落脚点，static：不占任务栈 */
-  static uint32_t last_print = 0;
   (void)argument;
 
-  /* 检查返回值：启动失败时 total 会一直是 0，光看接线找不到原因 */
-  HAL_StatusTypeDef rx_st = uart_rx_start();
-  if (rx_st != HAL_OK) {
-    SEGGER_RTT_printf(0, "[ERR] uart_rx_start st=%d\r\n", (int)rx_st);
-  }
-
+  /* CubeMX 要求至少保留一个任务，本任务只占位，不承担业务。
+   * ⚠️ 两条硬约束：
+   *   1) 任务函数永不 return（返回会跳 prvTaskExitError 停机）⇒ 必须 for(;;)
+   *   2) 不要在这里碰 uart_rx_*：环的读指针只能有一个消费者（StartRxTask） */
   for(;;)
   {
-    uint16_t n = uart_rx_read(buf, sizeof(buf));
-    if (n > 0)
-    {
-      total += n;
-      uint32_t now = xTaskGetTickCount();          /* 1 tick = 1 ms */
-      if((now - last_print) >= 1000)               /* 1 s 汇总一次，别把 RTT 顶爆 */
-      {
-        last_print = now;
-        SEGGER_RTT_printf(0, "n=%u total=%u ovf=%u lost=%u\r\n",
-                          (unsigned)n, (unsigned)total,
-                          (unsigned)uart_rx_overflow(), (unsigned)uart_rx_evt_lost());
-        SEGGER_RTT_printf(0, "buf[0]=%02X buf[n-1]=%02X\r\n", (unsigned)buf[0], (unsigned)buf[n-1]);
-      }
-    }
-    osDelay(20);
+    osDelay(1000);
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -222,6 +208,12 @@ static void StartRxTask(void *argument)
   static uint8_t buf[256];
   static uint32_t total = 0;
 
+  /* 检查返回值：启动失败时 total 会一直是 0，光看接线找不到原因 */
+  HAL_StatusTypeDef rx_st = uart_rx_start();
+  if (rx_st != HAL_OK) {
+    SEGGER_RTT_printf(0, "[ERR] uart_rx_start st=%d\r\n", (int)rx_st);
+  }
+
   QueueHandle_t q = uart_rx_queue();
   while (NULL == q)                 /* 队列没建好就等 */
   {
@@ -239,9 +231,10 @@ static void StartRxTask(void *argument)
       if(n > 0)
       {
         total += n;
-        SEGGER_RTT_printf(0, "evt=%u n=%u total=%u ovf=%u lost=%u\r\n",
+        SEGGER_RTT_printf(0, "evt=%u n=%u total=%u ovf=%u lost=%u qfull=%u\r\n",
                                   (unsigned)evt, (unsigned)n, (unsigned)total,
-                                  (unsigned)uart_rx_overflow(), (unsigned)uart_rx_evt_lost());
+                                  (unsigned)uart_rx_overflow(), (unsigned)uart_rx_evt_lost(),
+                                  (unsigned)uart_rx_evt_qfull());                         
       }
     }
   }
