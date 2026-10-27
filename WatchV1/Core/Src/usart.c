@@ -265,8 +265,28 @@ uint16_t uart_rx_read(uint8_t *dst, uint16_t max)
     return avail;
 }
 
+
+
 uint32_t uart_rx_overflow(void) { return g_rx_overflow; }
 uint32_t uart_rx_evt_lost(void) { return g_evt_lost; }
 uint32_t uart_rx_evt_qfull(void) { return g_evt_qfull; }
+
+/* 帧解析的通道，传给frame */
+uint16_t uart_rx_avail(void)
+{
+    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    if (avail > UART_RX_BUF_SIZE) avail = UART_RX_BUF_SIZE;
+    return avail; 
+
+}
+
+int uart_rx_at(uint16_t off, uint8_t *b)
+{
+    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    if (off >= avail) return 0;                
+
+    *b = g_rx_buf[(uint16_t)(g_rx_rd + off) & (UART_RX_BUF_SIZE - 1)];
+    return 1;
+}
 
 /* USER CODE END 1 */

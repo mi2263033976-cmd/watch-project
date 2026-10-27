@@ -50,6 +50,8 @@ uint32_t uart_rx_overflow(void);         /* 软件环累计丢了多少字节 */
 uint32_t uart_rx_evt_lost(void);         /* 零增量事件次数：未知量，非零 = ISR 被饿死过 */
 uint32_t uart_rx_evt_qfull(void);        /* 队列满、事件没发出去的次数（数据仍在环里） */
 QueueHandle_t uart_rx_queue(void);       /* 消费者拿队列句柄 */
+uint16_t uart_rx_avail(void);                        /* 现在有多少字节可读 */
+int      uart_rx_at(uint16_t off, uint8_t *b);       /* 看第 off 个字节，返回 1/0，不推进 rd */
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
