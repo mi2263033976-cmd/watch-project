@@ -194,11 +194,21 @@ static void rx_push(uint8_t b)
     g_rx_wr++;
 }
 
+/* 当前可读字节数（原始差值，**不做溢出截断**）。
+ * 故意不调 rx_drop_if_overflow()：查询函数不带副作用；
+ * 溢出判定恰恰靠"这个值能大于容量"，截断会让 ovf 永远不涨。
+ * 容量是常量 UART_RX_BUF_SIZE，不归这个函数算。 */
+uint16_t uart_rx_avail(void)
+{
+    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    return avail; 
+}
+
 /* 溢出修正：读指针落后超过一整圈 ⇒ 追不回的丢掉并记账。
  * 只有任务会写 g_rx_rd，所以本函数只能在任务上下文调用。 */
 static void rx_drop_if_overflow(void)
 {
-    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    uint16_t avail = uart_rx_avail();
     if (avail > UART_RX_BUF_SIZE) {
         g_rx_overflow += (uint32_t)(avail - UART_RX_BUF_SIZE);
         g_rx_rd = (uint16_t)(g_rx_wr - UART_RX_BUF_SIZE);   /* 停在活着的最老数据上 */
@@ -248,11 +258,23 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     g_last_pos = Size;
 }
 
+void uart_rx_drop(uint16_t n)
+{
+    rx_drop_if_overflow();                     /* ① 进来先清债 */
+
+    uint16_t avail = uart_rx_avail();
+    if (n > avail) n = avail;                  /* ② 接口带长度、内部截断 */
+
+    g_rx_rd += n;
+
+    rx_drop_if_overflow();                     /* ③ 这几条指令之间中断可能又搬了字节进环，再修一次 */
+}
+
 uint16_t uart_rx_read(uint8_t *dst, uint16_t max)
 {
     rx_drop_if_overflow();                     /* ① 进来先清债 */
 
-    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
+    uint16_t avail = uart_rx_avail();
     if (avail > max) avail = max;              /* ② 接口带长度、内部截断 */
 
     for (uint16_t i = 0; i < avail; i++)
@@ -266,24 +288,14 @@ uint16_t uart_rx_read(uint8_t *dst, uint16_t max)
 }
 
 
-
 uint32_t uart_rx_overflow(void) { return g_rx_overflow; }
 uint32_t uart_rx_evt_lost(void) { return g_evt_lost; }
 uint32_t uart_rx_evt_qfull(void) { return g_evt_qfull; }
 
 /* 帧解析的通道，传给frame */
-uint16_t uart_rx_avail(void)
-{
-    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
-    if (avail > UART_RX_BUF_SIZE) avail = UART_RX_BUF_SIZE;
-    return avail; 
-
-}
-
 int uart_rx_at(uint16_t off, uint8_t *b)
 {
-    uint16_t avail = (uint16_t)(g_rx_wr - g_rx_rd);
-    if (off >= avail) return 0;                
+    if ((NULL == b) || (off >= uart_rx_avail())) return 0;                
 
     *b = g_rx_buf[(uint16_t)(g_rx_rd + off) & (UART_RX_BUF_SIZE - 1)];
     return 1;

@@ -29,6 +29,7 @@
 #include "aht21.h"
 #include "aht21_handler.h"
 #include "usart.h"
+#include "frame.h"
 #include "string.h"
 #include "queue.h"
 /* USER CODE END Includes */
@@ -205,8 +206,9 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName)
 static void StartRxTask(void *argument)
 {
   (void)argument;
-  static uint8_t buf[256];
   static uint32_t total = 0;
+  static uint8_t out[32];        /* 一帧数据区最大 32 */
+  uint32_t last_dump = 0;       /* 记“上次打总账的时刻”（tick）*/
 
   /* 检查返回值：启动失败时 total 会一直是 0，光看接线找不到原因 */
   HAL_StatusTypeDef rx_st = uart_rx_start();
@@ -225,17 +227,38 @@ static void StartRxTask(void *argument)
   {
     uint16_t evt = 0;       /*evt 只当"叫醒服务"*/
     if(xQueueReceive(q,&evt,portMAX_DELAY) == pdTRUE) /*portMAX_DELAY：没事件就一直睡，不占 CPU、不轮询。*/
-    {
-      uint16_t n = uart_rx_read(buf,sizeof(buf)); /* 用环里的avail */
-
-      if(n > 0)
+    {      
+      uint32_t prog = 0, okn = 0, guard = 0; //丢掉的字节/成功交付的帧数/死循环保险
+      
+      for(;;)
       {
-        total += n;
-        SEGGER_RTT_printf(0, "evt=%u n=%u total=%u ovf=%u lost=%u qfull=%u\r\n",
-                                  (unsigned)evt, (unsigned)n, (unsigned)total,
-                                  (unsigned)uart_rx_overflow(), (unsigned)uart_rx_evt_lost(),
-                                  (unsigned)uart_rx_evt_qfull());                         
+        uint8_t len = 0;
+        frame_err_t r = frame_poll(xTaskGetTickCount() * portTICK_PERIOD_MS, out, &len);
+        
+        /* 解析一步：等 / 丢 1 字节 / 交整帧 */
+        if (r == FRAME_OK)    //收到一帧
+        { 
+          okn ++; total += len; 
+          SEGGER_RTT_printf(0, "  FRAME len=%u d0=%02X dlast=%02X\r\n",
+                      len, out[0], len ? out[len-1] : 0);
+        } 
+        else if (r == FRAME_PROGRESS)   {prog ++;}     //有进展，再来一次
+        else break;                                    //FRAME_WAIT：没进展，等下次唤醒
+        
+        /* 保险：防止环里有垃圾数据，poll 永远进不去 FRAME_WAIT，死循环。 */
+        if(++guard > 2000)
+        { SEGGER_RTT_printf(0, "[W] poll guard!\r\n"); break; }
       }
+      
+      /* 每次唤醒最多一行，避免 RTT 堵塞 */
+      if(prog || okn)     
+      SEGGER_RTT_printf(0, "wake evt=%u prog=%u ok=%u total=%u\r\n",
+                          (unsigned)evt, (unsigned)prog, (unsigned)okn, (unsigned)total);
+      
+      uint32_t now = xTaskGetTickCount();            /* 每秒一行总账 */
+      if ((now - last_dump) >= pdMS_TO_TICKS(1000)) 
+      { last_dump = now; frame_print_counters(); }    
+
     }
   }
 }
