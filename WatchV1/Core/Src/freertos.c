@@ -226,8 +226,8 @@ static void StartRxTask(void *argument)
   for(;;)
   {
     uint16_t evt = 0;       /*evt 只当"叫醒服务"*/
-    if(xQueueReceive(q,&evt,portMAX_DELAY) == pdTRUE) /*portMAX_DELAY：没事件就一直睡，不占 CPU、不轮询。*/
-    {      
+    (void)xQueueReceive(q, &evt, pdMS_TO_TICKS(5));   /* 结果不参与判断 */
+         
       uint32_t prog = 0, okn = 0, guard = 0; //丢掉的字节/成功交付的帧数/死循环保险
       
       for(;;)
@@ -259,7 +259,7 @@ static void StartRxTask(void *argument)
       if ((now - last_dump) >= pdMS_TO_TICKS(1000)) 
       { last_dump = now; frame_print_counters(); }    
 
-    }
+    
   }
 }
 
