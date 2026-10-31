@@ -22,40 +22,33 @@ static void SCL_L(void) {HAL_GPIO_WritePin(SCL_GPIO_Port,SCL_Pin,GPIO_PIN_RESET)
  * 100MHz 下 1us = 100 个计数，计数由 CPU 主频驱动，与中断无关。 */
 static void I2C_DelayUs(uint32_t us)
 {
-    uint32_t start = DWT->CYCCNT;
-    uint32_t ticks = us * (SystemCoreClock / 1000000u);
-
-    while ((DWT->CYCCNT - start) < ticks) { }
+  uint32_t start = DWT->CYCCNT;
+  uint32_t ticks = us * (SystemCoreClock / 1000000u);
+  while ((DWT->CYCCNT - start) < ticks) { }
 }
 
 static void DWT_CycleCounter_Init(void)
 {
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   /* 打开跟踪单元 */
-    DWT->CYCCNT = 0;
-    DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;             /* 开周期计数器 */
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   /* 打开跟踪单元 */
+  DWT->CYCCNT = 0;
+  DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;             /* 开周期计数器 */
 }
 
 /* 一次性初始化：PB7/PB8 配成开漏 + 上拉，启动 DWT 计数器，总线置空闲（两线都释放） */
 void i2c_gpio_init(void)
 {
-    GPIO_InitTypeDef gpio = {0};
-
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-    gpio.Mode  = GPIO_MODE_OUTPUT_OD;   /* 开漏：只能主动拉低，"高"由上拉给 */
-    gpio.Pull  = GPIO_PULLUP;           /* 先借内部上拉；块 1.4 再换外部 4.7k 对比 */
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
-
-    gpio.Pin = SCL_Pin;
-    HAL_GPIO_Init(SCL_GPIO_Port, &gpio);
-
-    gpio.Pin = SDA_Pin;
-    HAL_GPIO_Init(SDA_GPIO_Port, &gpio);
-
-    DWT_CycleCounter_Init();
-
-    SCL_H();
-    SDA_H();                            /* 空闲态：两条线都释放（= 高） */
+  GPIO_InitTypeDef gpio = {0};
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  gpio.Mode  = GPIO_MODE_OUTPUT_OD;   /* 开漏：只能主动拉低，"高"由上拉给 */
+  gpio.Pull  = GPIO_PULLUP;           /* 先借内部上拉；块 1.4 再换外部 4.7k 对比 */
+  gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+  gpio.Pin = SCL_Pin;
+  HAL_GPIO_Init(SCL_GPIO_Port, &gpio);
+  gpio.Pin = SDA_Pin;
+  HAL_GPIO_Init(SDA_GPIO_Port, &gpio);
+  DWT_CycleCounter_Init();
+  SCL_H();
+  SDA_H();                            /* 空闲态：两条线都释放（= 高） */
 }
 
 /* START：SCL 保持高时，SDA 由高→低跳变（只有"SCL 高期间的跳变"才算事件） */
@@ -74,13 +67,13 @@ void i2c_start(void)
 /* STOP：SCL 保持高时，SDA 由低→高跳变（之前先趁 SCL 低把 SDA 压好） */
 void i2c_stop(void)
 {
-SCL_L();
-SDA_L();   /* 趁 SCL 低先压下去 */
-I2C_DelayUs(Time_us);
-SCL_H();   /* 抬钟 */
-I2C_DelayUs(Time_us);
-SDA_H();   /* ★ SCL 高时释放 = STOP */
-I2C_DelayUs(Time_us);
+  SCL_L();
+  SDA_L();   /* 趁 SCL 低先压下去 */
+  I2C_DelayUs(Time_us);
+  SCL_H();   /* 抬钟 */
+  I2C_DelayUs(Time_us);
+  SDA_H();   /* ★ SCL 高时释放 = STOP */
+  I2C_DelayUs(Time_us);
 }
 /* 主机发一个字节：MSB 先出；SCL 低时换数据，SCL 高时从机采样 */
 void i2c_write_byte(uint8_t data)

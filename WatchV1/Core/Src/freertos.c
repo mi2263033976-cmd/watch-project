@@ -28,6 +28,8 @@
 #include "SEGGER_RTT.h"
 #include "aht21.h"
 #include "aht21_handler.h"
+#include "mpu6050.h"
+#include "mpu6050_handler.h"
 #include "usart.h"
 #include "frame.h"
 #include "string.h"
@@ -51,8 +53,9 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-TaskHandle_t sensorTaskHandle = NULL;   /* sensorTask 句柄（动态创建，失败时为 NULL） */
+TaskHandle_t aht21TaskHandle = NULL;   /* Aht21Task 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t rxTaskHandle = NULL;       /* RxTask 句柄（动态创建，失败时为 NULL） */
+TaskHandle_t mpu6050TaskHandle = NULL; /*Mpu6050Task 句柄（动态创建，失败时为 NULL）*/
 
 
 /* USER CODE END Variables */
@@ -62,14 +65,15 @@ const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 128,
   .priority = (osPriority_t) osPriorityIdle,   /* = FreeRTOS 优先级 1（tskIDLE_PRIORITY+1）：
-                                                 占位任务只跑 osDelay，给最低，别跟 Sensor(3)/Rx(4) 抢。
+                                                 占位任务只跑 osDelay，给最低，别跟 Aht21(3)/Rx(4) 抢。
                                                  ⚠️ CubeMX 重生成会冲掉本行 —— 见下方 USER CODE 警示。 */
 };
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-static void StartSensorTask(void *argument);
+static void StartAht21Task(void *argument);
 static void StartRxTask(void *argument);
+static void StartMpu6050Task(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -114,15 +118,16 @@ void MX_FREERTOS_Init(void) {
   /* add threads, ... */
   /* ⚠️ defaultTask 的优先级写在 defaultTask_attributes（生成区），不在 USER CODE 段
    *    ⇒ CubeMX 重生成会把 osPriorityIdle 冲回 osPriorityNormal。
-   *    重生成后务必检查：.priority 必须仍是 osPriorityIdle（= FreeRTOS 1），否则占位任务会高过 RxTask/SensorTask。 */
-  BaseType_t ret = xTaskCreate(StartSensorTask,       /* ① 任务函数                     */
-                               "SensorTask",          /* ② 任务名（调试用）              */
+   *    重生成后务必检查：.priority 必须仍是 osPriorityIdle（= FreeRTOS 1），否则占位任务会高过 RxTask/Aht21Task。 */
+
+  BaseType_t ret = xTaskCreate(StartAht21Task,       /* ① 任务函数                     */
+                               "Aht21Task",          /* ② 任务名（调试用）              */
                                256,                   /* ③ 栈大小 = 256 word = 1KB      */
                                NULL,                  /* ④ 传给任务函数的参数            */
                                tskIDLE_PRIORITY + 3,  /* ⑤ 优先级 = 空闲任务优先级 + 3 .数字越大越高，< 56  */
-                               &sensorTaskHandle);    /* ⑥ 返回任务句柄                 */
+                               &aht21TaskHandle);    /* ⑥ 返回任务句柄                 */
   if (ret != pdPASS) {
-    SEGGER_RTT_printf(0, "[ERR] sensorTask create failed, ret=%d\r\n", (int)ret);
+    SEGGER_RTT_printf(0, "[ERR] Aht21Task create failed, ret=%d\r\n", (int)ret);
   }
 
   BaseType_t ret2 = xTaskCreate(StartRxTask,       
@@ -133,7 +138,17 @@ void MX_FREERTOS_Init(void) {
                                &rxTaskHandle);    
    if (ret2 != pdPASS) {
     SEGGER_RTT_printf(0, "[ERR] RxTask create failed, ret2=%d\r\n", (int)ret2);
-  }                            
+  }         
+
+  BaseType_t ret3 = xTaskCreate(StartMpu6050Task,       
+                               "Mpu6050Task",          
+                               256,                   
+                               NULL,                  
+                               tskIDLE_PRIORITY + 4,  
+                               &mpu6050TaskHandle);    
+   if (ret3 != pdPASS) {
+    SEGGER_RTT_printf(0, "[ERR] Mpu6050Task create failed, ret3=%d\r\n", (int)ret3);
+  }                  
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -170,7 +185,7 @@ void StartDefaultTask(void *argument)
 
 /* 传感器任务：先初始化一次，然后每 1 s 取一次（handler 内部有缓存，不碰总线以外的逻辑）。
  * 为什么初始化也放这里：aht21.c 内部用 vTaskDelay，调度器启动后才能调。 */
-static void StartSensorTask(void *argument)
+static void StartAht21Task(void *argument)
 {
   (void)argument;
 
@@ -198,6 +213,21 @@ static void StartSensorTask(void *argument)
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
+
+static void StartMpu6050Task(void *argument)
+{
+  (void)argument;
+
+  mpu6050_err_t init_err = mpu6050_init();
+  if(init_err != MPU6050_OK)
+  {
+    SEGGER_RTT_printf(0, "MPU6050 init FAIL = %d\r\n", init_err);
+  }
+
+   
+}
+
+
 /* 栈溢出钩子：覆盖 CMSIS 的 __WEAK 版（cmsis_os2.c）。
  * 打印任务名后关中断停机 —— 便于用 Ozone 接上抓现场，别让它继续踩内存。 */
 void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName)
