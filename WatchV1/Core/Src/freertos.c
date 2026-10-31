@@ -61,7 +61,9 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 128,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityIdle,   /* = FreeRTOS 优先级 1（tskIDLE_PRIORITY+1）：
+                                                 占位任务只跑 osDelay，给最低，别跟 Sensor(3)/Rx(4) 抢。
+                                                 ⚠️ CubeMX 重生成会冲掉本行 —— 见下方 USER CODE 警示。 */
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,6 +112,9 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  /* ⚠️ defaultTask 的优先级写在 defaultTask_attributes（生成区），不在 USER CODE 段
+   *    ⇒ CubeMX 重生成会把 osPriorityIdle 冲回 osPriorityNormal。
+   *    重生成后务必检查：.priority 必须仍是 osPriorityIdle（= FreeRTOS 1），否则占位任务会高过 RxTask/SensorTask。 */
   BaseType_t ret = xTaskCreate(StartSensorTask,       /* ① 任务函数                     */
                                "SensorTask",          /* ② 任务名（调试用）              */
                                256,                   /* ③ 栈大小 = 256 word = 1KB      */
