@@ -30,6 +30,7 @@
 #include "aht21_handler.h"
 #include "mpu6050.h"
 #include "mpu6050_handler.h"
+#include "soft_i2c.h"
 #include "usart.h"
 #include "frame.h"
 #include "string.h"
@@ -44,10 +45,26 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+#define W9_RUN_MPU_TASK  1      /* 0 = 只跑 Aht21Task（对照组）；1 = 两个一起跑 */ 
+
+/* ═══ W9 撞车实验（临时）───────────────────────────────────────────────
+ * 三条证据：① 返回值 ② WHO_AM_I 参照量 ③ 事务耗时
+ * 实验期这三个值先写在这里；实验完要么收进 mpu6050 驱动层，要么删掉。
+ * ═══════════════════════════════════════════════════════════════════ */
+#define MPU_WHO_AM_I_REG   0x75   /* mpu6050.c 内部有同值宏，但没对上层暴露 */
+#define MPU_ADDR7_PROBE    0x68   /* 与 mpu6050.c:29 / main.c:48 一致 */
+#define MPU_SLOW_US        3000   /* “被拉长”门槛：正常 1.5 ms 的两倍 */
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+
+/* DWT 周期数 → 微秒（计数器在 i2c_gpio_init() 里已开，见 soft_i2c.c） */
+static uint32_t CycToUs(uint32_t cyc)
+{
+  return cyc / (SystemCoreClock / 1000000u);
+}
 
 /* USER CODE END PM */
 
@@ -140,6 +157,7 @@ void MX_FREERTOS_Init(void) {
     SEGGER_RTT_printf(0, "[ERR] RxTask create failed, ret2=%d\r\n", (int)ret2);
   }         
 
+  #if W9_RUN_MPU_TASK
   BaseType_t ret3 = xTaskCreate(StartMpu6050Task,       
                                "Mpu6050Task",          
                                256,                   
@@ -149,6 +167,8 @@ void MX_FREERTOS_Init(void) {
    if (ret3 != pdPASS) {
     SEGGER_RTT_printf(0, "[ERR] Mpu6050Task create failed, ret3=%d\r\n", (int)ret3);
   }                  
+  #endif
+  
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -218,15 +238,50 @@ static void StartMpu6050Task(void *argument)
 {
   (void)argument;
 
-  mpu6050_err_t init_err = mpu6050_init();
-  if(init_err != MPU6050_OK)
+  mpu6050_data_t d;
+  memset(&d, 0, sizeof d);          /* 失败时裸层不动出参，先把脏值清掉 */
+
+  uint8_t  id       = 0;
+  uint32_t n_total  = 0;            /* 读了多少次        */
+  uint32_t n_fail   = 0;            /* ① 返回值非 OK     */
+  uint32_t n_id     = 0;            /* ② 参照量不对      */
+  uint32_t n_slow   = 0;            /* ③ 耗时超门槛      */
+  uint32_t us_max   = 0;            /* 本秒内最大耗时    */
+  uint32_t last_dump = xTaskGetTickCount();
+
+  for (;;)
   {
-    SEGGER_RTT_printf(0, "MPU6050 init FAIL = %d\r\n", init_err);
+    /* ② 参照量探针：单独一次只读事务，放在计时窗口之外，不污染 ③ */
+    uint8_t probe = i2c_mem_read(MPU_ADDR7_PROBE, MPU_WHO_AM_I_REG, &id, 1);
+
+    /* ③ 计时窗口：只包住"读一次"，不包延时、不包打印 */
+    uint32_t t0 = DWT->CYCCNT;
+    mpu6050_err_t r = mpu6050_read(&d);
+    uint32_t t1 = DWT->CYCCNT;
+
+    uint32_t us = CycToUs(t1 - t0);
+    if (us > us_max) us_max = us;
+
+    n_total++;
+    if (r != MPU6050_OK)                        { n_fail++; }
+    if ((probe != 0) || (id != MPU_ADDR7_PROBE)) { n_id++;   }
+    if (us > MPU_SLOW_US)                        { n_slow++; }
+
+    /* 每秒一行总账（节流：不打每次读，否则 RTT 自己就成了干扰源） */
+    uint32_t now = xTaskGetTickCount();
+    if ((now - last_dump) >= pdMS_TO_TICKS(1000))
+    {
+      last_dump = now;
+      SEGGER_RTT_printf(0,
+        "n=%u fail=%u id=%u slow=%u us=%u max=%u ax=%d idv=%02X\r\n",
+        (unsigned)n_total, (unsigned)n_fail, (unsigned)n_id, (unsigned)n_slow,
+        (unsigned)us, (unsigned)us_max, (int)d.raw.ax, (unsigned)id);
+      us_max = 0;                   /* 每秒重新量峰值，别让历史峰值骗你 */
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
-
-   
 }
-
 
 /* 栈溢出钩子：覆盖 CMSIS 的 __WEAK 版（cmsis_os2.c）。
  * 打印任务名后关中断停机 —— 便于用 Ozone 接上抓现场，别让它继续踩内存。 */
