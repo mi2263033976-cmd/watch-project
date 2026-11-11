@@ -43,4 +43,7 @@ uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len
 uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len);  /* 命令式读，末字节自动 NACK；0=成功 */
 uint8_t i2c_ping(uint8_t dev7);                                   /* 探活：0=在线，非 0=无应答 */
 uint8_t i2c_scan(uint8_t *found, uint8_t max);   /* 普查 0x08~0x77；返回找到的个数 */
+
+uint8_t i2c_bus_lock_init(void); /* 互斥锁建立 */
+
 #endif /* __SOFT_I2C_H__ */

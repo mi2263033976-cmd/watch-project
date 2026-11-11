@@ -10,6 +10,11 @@
 #include "soft_i2c.h"
 #include <stdint.h>
 
+/* FreeRTOS：互斥量（semphr.h）+ 调度器状态查询（task.h） */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
 /* ── 位操作助手 ──────────────────────────────────────────────────────
  *   开漏输出下：「写 1」= 释放引脚（高由上拉电阻给），「写 0」= 主动拉低
  */
@@ -147,6 +152,34 @@ void i2c_send_nack()
   I2C_DelayUs(Time_us);
 }
 
+/* 总线互斥锁建立 */
+//句柄
+static SemaphoreHandle_t s_i2c_bus_lock = NULL;
+
+//初始化
+uint8_t i2c_bus_lock_init(void)
+{
+  if(NULL == s_i2c_bus_lock)
+  {
+    s_i2c_bus_lock = xSemaphoreCreateMutex();
+  }
+  return (s_i2c_bus_lock == NULL) ? 0u : 1u;
+}
+//取锁，申请总线使用权
+static void BusTake(void)
+{
+  if (NULL == s_i2c_bus_lock) return;                              /* ① 锁还没造出来 */
+  if (taskSCHEDULER_RUNNING != xTaskGetSchedulerState()) return;    /* ② 还没有并发 */
+  (void)xSemaphoreTake(s_i2c_bus_lock,portMAX_DELAY);
+}
+//放锁，归还总线
+static void BusGive(void)
+{
+if (NULL == s_i2c_bus_lock) return;                           
+if (taskSCHEDULER_RUNNING != xTaskGetSchedulerState()) return;
+(void)xSemaphoreGive(s_i2c_bus_lock);
+} 
+
 /* 私有助手：发一字节并查应答。
  * ⚠️ 契约：NACK 时【本函数内部已经 i2c_stop()】，调用方不要再补 stop。
  *    好处 = 失败必定释放总线；代价 = 调用点看不到这个副作用，改前先读这里。 */
@@ -164,7 +197,7 @@ static uint8_t i2c_mem_checked(uint8_t byte)
 	}
 }
 
-uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len)
+static uint8_t i2c_mem_write_raw(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len)
 {  
   if (len == 0) return 1;            //防止len=0;
 
@@ -181,7 +214,7 @@ uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len
   return 0;
 
 }
-uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t *buf, uint8_t len)
+static uint8_t i2c_mem_read_raw (uint8_t dev7, uint8_t reg, uint8_t *buf, uint8_t len)
 {
   if (len == 0) return 1;            //防止len=0;
 
@@ -205,7 +238,7 @@ uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t *buf, uint8_t len)
 
 /* 命令式器件：START → 读地址 → 连读 len 字节（末字节 NACK）→ STOP。
  * 失败时 STOP 已由 i2c_mem_checked 发出；返回值 0=成功。 */
-uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len)  /* 0=成功 */
+static uint8_t i2c_read_bytes_raw(uint8_t dev7, uint8_t *buf, uint8_t len)  /* 0=成功 */
 {
   if(len == 0) return 1;
 
@@ -225,7 +258,7 @@ uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len)  /* 0=成功 */
 
 /* 探活：START → 设备地址 → 查 ACK。0=在线。
  * 无应答时 STOP 已由 i2c_mem_checked 发出（见上面的契约）。 */
-uint8_t i2c_ping(uint8_t dev7)
+static uint8_t i2c_ping_raw(uint8_t dev7)
 {
   i2c_start();
   if (i2c_mem_checked(dev7 << 1 | 0) != 0) return 1;
@@ -247,4 +280,37 @@ uint8_t i2c_scan(uint8_t *found, uint8_t max)
     }
   }
   return num;
+}
+
+/* 建立互斥锁后的读和写 */
+uint8_t i2c_mem_write(uint8_t dev7, uint8_t reg, const uint8_t *buf, uint8_t len)
+{
+  BusTake();
+  uint8_t err = i2c_mem_write_raw(dev7, reg, buf, len);
+  BusGive();
+  return err;
+}
+
+uint8_t i2c_mem_read (uint8_t dev7, uint8_t reg, uint8_t *buf, uint8_t len)
+{
+  BusTake();
+  uint8_t err = i2c_mem_read_raw(dev7, reg, buf, len);
+  BusGive();
+  return err;
+}
+
+uint8_t i2c_read_bytes(uint8_t dev7, uint8_t *buf, uint8_t len)
+{
+  BusTake();
+  uint8_t err = i2c_read_bytes_raw(dev7, buf, len);
+  BusGive();
+  return err;
+}
+
+uint8_t i2c_ping(uint8_t dev7)
+{
+  BusTake();
+  uint8_t err = i2c_ping_raw(dev7);
+  BusGive();
+  return err;
 }

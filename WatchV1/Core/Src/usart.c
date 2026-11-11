@@ -146,11 +146,11 @@ static uint8_t dma_buf[DMA_RX_SIZE];       /* DMA 直接往里写，不能用局
 static uint8_t  g_rx_buf[UART_RX_BUF_SIZE];   /* 环形区：唯一写者是 rx_push */
 static volatile uint16_t g_rx_wr = 0;         /* 写指针：异步上下文（DMA 事件）独占 */
 static uint16_t g_rx_rd = 0;                  /* 读指针：任务独占 */
-static uint32_t g_rx_overflow = 0;            /* 溢出累计（任务写、任务读） */
-static uint32_t g_evt_lost   = 0;             /* 零增量(Size==last)事件次数：**未知量，不等于圈数**。
+static volatile uint32_t g_rx_overflow = 0;            /* 溢出累计（任务写、任务读） */
+static volatile uint32_t g_evt_lost   = 0;             /* 零增量(Size==last)事件次数：**未知量，不等于圈数**。
                                                * 非零 = ISR 被饿死过（HT/TC 都没及时到）；此时"从哪开始"
                                                * 已不可信，只能报警，不能拿它算账。 */
-static uint32_t g_evt_qfull  = 0;             /* 队列满、事件没发出去的次数：数据仍在环里 */
+static volatile uint32_t g_evt_qfull  = 0;             /* 队列满、事件没发出去的次数：数据仍在环里 */
 
 /*队列 */
 #define RX_EVT_Q_LEN   8                       /* 队列深度 */
