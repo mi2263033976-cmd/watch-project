@@ -40,12 +40,32 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+/* ═══ 设备表（W9 第 4 步）════════════════════════════════════════════════
+ * 目的：加一个器件 = 表里加一行 + 写一个"读一次"函数；任务代码 diff = 0。
+ * 约束：表项的 read() 必须【不阻塞】——否则会拖慢同一张表里的其他器件。
+ * ═══════════════════════════════════════════════════════════════════ */
+typedef enum {
+    DEV_OK  = 0,     /* 这次读到了   */
+    DEV_ERR,         /* 这次没读到   */
+} dev_result_t;
+
+/* "读一次"。判据：里面不许 vTaskDelay / HAL_Delay / 长时间等锁。 */
+typedef dev_result_t (*dev_read_fn)(void *ctx);
+
+typedef struct {
+    const char *name;       /* 调试用：日志里认得出是谁          */
+    uint32_t    period_ms;  /* 采样周期                          */
+    uint32_t    next_due;   /* 下次到期的【绝对时刻】(tick)       */
+    uint16_t    fail_cnt;   /* 这一项连续出错次数（0 = 正常） */
+    dev_read_fn read;       /* 读一次（非阻塞）                   */
+    void       *ctx;        /* 该器件自己的出参缓冲/状态           */
+} dev_item_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define W9_RUN_MPU_TASK  1      /* 0 = 只跑 Aht21Task（对照组）；1 = 两个一起跑 */ 
+#define W9_RUN_MPU_TASK  0      /* 0 = 只跑 Aht21Task（对照组）；1 = 两个一起跑 */ 
 
 /* ═══ W9 撞车实验（临时）───────────────────────────────────────────────
  * 三条证据：① 返回值 ② WHO_AM_I 参照量 ③ 事务耗时
@@ -69,7 +89,7 @@
 TaskHandle_t aht21TaskHandle = NULL;   /* Aht21Task 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t rxTaskHandle = NULL;       /* RxTask 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t mpu6050TaskHandle = NULL; /*Mpu6050Task 句柄（动态创建，失败时为 NULL）*/
-
+TaskHandle_t sensorTaskHandle = NULL;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -87,6 +107,7 @@ const osThreadAttr_t defaultTask_attributes = {
 static void StartAht21Task(void *argument);
 static void StartRxTask(void *argument);
 static void StartMpu6050Task(void *argument);
+static void StartSensorTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -165,7 +186,15 @@ void MX_FREERTOS_Init(void) {
     SEGGER_RTT_printf(0, "[ERR] Mpu6050Task create failed, ret3=%d\r\n", (int)ret3);
   }                  
   #endif
-  
+  BaseType_t ret4 = xTaskCreate(StartSensorTask,       
+                               "SensorTask",          
+                               256,                   
+                               NULL,                  
+                               tskIDLE_PRIORITY + 4,  
+                               &sensorTaskHandle);    
+   if (ret4 != pdPASS) {
+    SEGGER_RTT_printf(0, "[ERR] SensorTask create failed, ret4=%d\r\n", (int)ret4);
+  }                  
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -200,10 +229,89 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+/* ── 器件上下文：每个器件一块自己的出参缓冲 ─────────────────────────── */
+static mpu6050_data_t s_mpu_ctx;
+
+/* ── 适配：把"裸驱动的返回值"翻译成表能看懂的 DEV_OK / DEV_ERR ─────── */
+static dev_result_t MpuAdapterRead(void *ctx)
+{
+    mpu6050_data_t *d = (mpu6050_data_t *)ctx;
+    return (MPU6050_OK == mpu6050_read(d)) ? DEV_OK : DEV_ERR;
+}
+
+/* ── 第二行：MPU6050 探活（周期 500 ms）────────────────────────────── */
+static uint8_t s_ping_ctx;              /* 0 = 在线，非 0 = 无应答 */
+
+static dev_result_t PingAdapterRead(void *ctx)
+{
+    uint8_t *r = (uint8_t *)ctx;
+    //*r = i2c_ping(MPU_PROBE_ADDR7);
+    *r = i2c_ping(0x6A);  //临时测试
+    return (0 == *r) ? DEV_OK : DEV_ERR;
+}
+
+/* ── 设备表：加器件就加一行 ────────────────────────────────────────── */
+static dev_item_t s_dev_table[] = {
+    /* name        period_ms   next_due   fail_cnt      read             ctx        */
+    {  "mpu6050",   20,         0,         0,          MpuAdapterRead,  &s_mpu_ctx  },
+    {  "ping",      530,        0,         0,          PingAdapterRead, &s_ping_ctx },
+};
+
+//s_dev_table 的设备项数，由表总字节数除以单个表项字节数自动得出
+#define DEV_COUNT   ((uint8_t)(sizeof s_dev_table / sizeof s_dev_table[0]))
+
 /* DWT 周期数 → 微秒（计数器在 i2c_gpio_init() 里已开，见 soft_i2c.c） */
 static uint32_t CycToUs(uint32_t cyc)
 {
   return cyc / (SystemCoreClock / 1000000u);
+}
+
+/* ── 表驱动采样任务：3 句话，3 个坑 ─────────────────────────────────── */
+static void StartSensorTask(void *argument)
+{
+  (void)argument;
+
+  uint32_t n = 0;                      /* ⚠️ 验收用，第 4 步删 */
+  uint32_t last_dump = xTaskGetTickCount();      /* ⚠️ 验收用，第 4 步删 */
+
+  for(;;)
+  {
+    uint32_t now = xTaskGetTickCount();
+    uint32_t wait = portMAX_DELAY;
+    uint8_t i;
+    for (i = 0; i < DEV_COUNT; i++)
+    {
+      dev_item_t *it = &s_dev_table[i];
+
+      if((int32_t)(now - it->next_due) >= 0)    //到期了
+      {
+        if(NULL != it->read)    
+        {
+          if (DEV_OK != it->read(it->ctx)) { if(it->fail_cnt < UINT16_MAX) it->fail_cnt++; }   /* 记到本人头上 */
+          else                             { it->fail_cnt = 0; } /* 成功就清零 */
+          n++;
+        }
+        it->next_due += it->period_ms;             //累加一个周期 
+      }
+      uint32_t d = it->next_due - now;          //离下次到期还有多久 
+      if ((int32_t)d < (int32_t)wait) { wait = d; }
+    }
+
+    uint32_t now2 = xTaskGetTickCount();                     /* ⚠️ 验收用 */
+    if ((now2 - last_dump) >= pdMS_TO_TICKS(1000))           /* ⚠️ 验收用 */
+    {
+      last_dump = now2;
+      SEGGER_RTT_printf(0, "TBL n=%u mpu_f=%u ping_f=%u ax=%d\r\n",
+                  (unsigned)n,
+                  (unsigned)s_dev_table[0].fail_cnt,
+                  (unsigned)s_dev_table[1].fail_cnt,
+                  (int)s_mpu_ctx.raw.ax);
+      n = 0; 
+    }
+
+    if((int32_t)wait <= 0)  wait = 1;       //已过期：至少睡 1 tick
+    vTaskDelay(wait);
+  }
 }
 
 /* 传感器任务：先初始化一次，然后每 1 s 取一次（handler 内部有缓存，不碰总线以外的逻辑）。
@@ -356,9 +464,7 @@ static void StartRxTask(void *argument)
       
       uint32_t now = xTaskGetTickCount();            /* 每秒一行总账 */
       if ((now - last_dump) >= pdMS_TO_TICKS(1000)) 
-      { last_dump = now; frame_print_counters(); }    
-
-    
+      { last_dump = now; frame_print_counters(); }        
   }
 }
 
