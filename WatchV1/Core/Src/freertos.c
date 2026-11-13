@@ -229,6 +229,12 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+/* DWT 周期数 → 微秒（计数器在 i2c_gpio_init() 里已开，见 soft_i2c.c） */
+static uint32_t CycToUs(uint32_t cyc)
+{
+  return cyc / (SystemCoreClock / 1000000u);
+}
+
 /* ── 器件上下文：每个器件一块自己的出参缓冲 ─────────────────────────── */
 static mpu6050_data_t s_mpu_ctx;
 
@@ -239,31 +245,29 @@ static dev_result_t MpuAdapterRead(void *ctx)
     return (MPU6050_OK == mpu6050_read(d)) ? DEV_OK : DEV_ERR;
 }
 
-/* ── 第二行：MPU6050 探活（周期 500 ms）────────────────────────────── */
-static uint8_t s_ping_ctx;              /* 0 = 在线，非 0 = 无应答 */
-
-static dev_result_t PingAdapterRead(void *ctx)
-{
-    uint8_t *r = (uint8_t *)ctx;
-    //*r = i2c_ping(MPU_PROBE_ADDR7);
-    *r = i2c_ping(0x6A);  //临时测试
-    return (0 == *r) ? DEV_OK : DEV_ERR;
-}
-
 /* ── 设备表：加器件就加一行 ────────────────────────────────────────── */
 static dev_item_t s_dev_table[] = {
     /* name        period_ms   next_due   fail_cnt      read             ctx        */
     {  "mpu6050",   20,         0,         0,          MpuAdapterRead,  &s_mpu_ctx  },
-    {  "ping",      530,        0,         0,          PingAdapterRead, &s_ping_ctx },
 };
 
 //s_dev_table 的设备项数，由表总字节数除以单个表项字节数自动得出
 #define DEV_COUNT   ((uint8_t)(sizeof s_dev_table / sizeof s_dev_table[0]))
 
-/* DWT 周期数 → 微秒（计数器在 i2c_gpio_init() 里已开，见 soft_i2c.c） */
-static uint32_t CycToUs(uint32_t cyc)
+/* 查一项的健康状况：找到返回 1，没这个器件返回 0。
+ * 判据：按【名字】查，不按表下标 —— 下标会随加行/删行变化，调用方写死下标就脆。
+ * 只读，且 fail_cnt 是 16 位对齐 ⇒ 单条指令原子，不需要加锁。 */
+uint8_t SensorFailCount(const char *name, uint16_t *fail_out)
 {
-  return cyc / (SystemCoreClock / 1000000u);
+  for (uint8_t i = 0; i < DEV_COUNT; i++)
+  {
+    if(0 == strcmp(s_dev_table[i].name, name))
+    {
+      if(NULL != fail_out)  {*fail_out = s_dev_table[i].fail_cnt;}
+      return 1;
+    }
+  }
+  return 0;
 }
 
 /* ── 表驱动采样任务：3 句话，3 个坑 ─────────────────────────────────── */
@@ -301,11 +305,12 @@ static void StartSensorTask(void *argument)
     if ((now2 - last_dump) >= pdMS_TO_TICKS(1000))           /* ⚠️ 验收用 */
     {
       last_dump = now2;
-      SEGGER_RTT_printf(0, "TBL n=%u mpu_f=%u ping_f=%u ax=%d\r\n",
-                  (unsigned)n,
-                  (unsigned)s_dev_table[0].fail_cnt,
-                  (unsigned)s_dev_table[1].fail_cnt,
-                  (int)s_mpu_ctx.raw.ax);
+      uint16_t f = 0;
+      (void)SensorFailCount("mpu6050", &f);        /* 站在消费者位置查账 */
+      SEGGER_RTT_printf(0, "TBL n=%u mpu_f=%u find=%u ax=%d\r\n",
+                      (unsigned)n, (unsigned)f,
+                      (unsigned)SensorFailCount("nope", NULL),   /* 故意查不存在的 */
+                      (int)s_mpu_ctx.raw.ax);
       n = 0; 
     }
 
@@ -446,8 +451,8 @@ static void StartRxTask(void *argument)
         if (r == FRAME_OK)    //收到一帧
         { 
           okn ++; total += len; 
-          SEGGER_RTT_printf(0, "  FRAME len=%u d0=%02X dlast=%02X\r\n",
-                      len, out[0], len ? out[len-1] : 0);
+          // SEGGER_RTT_printf(0, "  FRAME len=%u d0=%02X dlast=%02X\r\n",
+          //             len, out[0], len ? out[len-1] : 0);
         } 
         else if (r == FRAME_PROGRESS)   {prog ++;}     //有进展，再来一次
         else break;                                    //FRAME_WAIT：没进展，等下次唤醒
