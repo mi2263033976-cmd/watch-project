@@ -65,16 +65,10 @@ typedef struct {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define W9_RUN_MPU_TASK  0      /* 0 = 只跑 Aht21Task（对照组）；1 = 两个一起跑 */ 
-
-/* ═══ W9 撞车实验（临时）───────────────────────────────────────────────
- * 三条证据：① 返回值 ② WHO_AM_I 参照量 ③ 事务耗时
- * 实验期这三个值先写在这里；实验完要么收进 mpu6050 驱动层，要么删掉。
- * ═══════════════════════════════════════════════════════════════════ */
-#define MPU_PROBE_ADDR7      0x68   /* 器件地址（AD0 接地）= mpu6050.c:29 */
-#define MPU_WHO_AM_I_REG     0x75
-#define MPU_WHO_AM_I_EXPECT  0x68   /* WHO_AM_I 的期望值；与地址同值纯属巧合 */
-#define MPU_SLOW_US        3000   /* “被拉长”门槛：正常 1.5 ms 的两倍 */
+/* W9 撞车实验脚手架已于 2026-11-13 清理：
+ *   实验开关 W9_RUN_MPU_TASK / 探针地址 MPU_PROBE_ADDR7 / WHO_AM_I 期望值 /
+ *   耗时门限 MPU_SLOW_US —— 随 Mpu6050Task 一起删除，证据已留档在
+ *   teaching/progress.md（T=1499 → 243）与 W9任务-学习笔记.md。 */
 
 /* USER CODE END PD */
 
@@ -88,7 +82,6 @@ typedef struct {
 /* USER CODE BEGIN Variables */
 TaskHandle_t aht21TaskHandle = NULL;   /* Aht21Task 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t rxTaskHandle = NULL;       /* RxTask 句柄（动态创建，失败时为 NULL） */
-TaskHandle_t mpu6050TaskHandle = NULL; /*Mpu6050Task 句柄（动态创建，失败时为 NULL）*/
 TaskHandle_t sensorTaskHandle = NULL;
 
 /* USER CODE END Variables */
@@ -106,7 +99,6 @@ const osThreadAttr_t defaultTask_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 static void StartAht21Task(void *argument);
 static void StartRxTask(void *argument);
-static void StartMpu6050Task(void *argument);
 static void StartSensorTask(void *argument);
 /* USER CODE END FunctionPrototypes */
 
@@ -175,17 +167,6 @@ void MX_FREERTOS_Init(void) {
     SEGGER_RTT_printf(0, "[ERR] RxTask create failed, ret2=%d\r\n", (int)ret2);
   }         
 
-  #if W9_RUN_MPU_TASK
-  BaseType_t ret3 = xTaskCreate(StartMpu6050Task,       
-                               "Mpu6050Task",          
-                               256,                   
-                               NULL,                  
-                               tskIDLE_PRIORITY + 4,  
-                               &mpu6050TaskHandle);    
-   if (ret3 != pdPASS) {
-    SEGGER_RTT_printf(0, "[ERR] Mpu6050Task create failed, ret3=%d\r\n", (int)ret3);
-  }                  
-  #endif
   BaseType_t ret4 = xTaskCreate(StartSensorTask,       
                                "SensorTask",          
                                256,                   
@@ -229,12 +210,6 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
-/* DWT 周期数 → 微秒（计数器在 i2c_gpio_init() 里已开，见 soft_i2c.c） */
-static uint32_t CycToUs(uint32_t cyc)
-{
-  return cyc / (SystemCoreClock / 1000000u);
-}
-
 /* ── 器件上下文：每个器件一块自己的出参缓冲 ─────────────────────────── */
 static mpu6050_data_t s_mpu_ctx;
 
@@ -256,7 +231,8 @@ static dev_item_t s_dev_table[] = {
 
 /* 查一项的健康状况：找到返回 1，没这个器件返回 0。
  * 判据：按【名字】查，不按表下标 —— 下标会随加行/删行变化，调用方写死下标就脆。
- * 只读，且 fail_cnt 是 16 位对齐 ⇒ 单条指令原子，不需要加锁。 */
+ * 只读，且 fail_cnt 是 16 位对齐 ⇒ 单条指令原子，不需要加锁。
+ * ⚠️ 当前【无调用方】：留给验收④（屏/LVGL 显示"传感器离线"）用的接口，别当死代码删。 */
 uint8_t SensorFailCount(const char *name, uint16_t *fail_out)
 {
   for (uint8_t i = 0; i < DEV_COUNT; i++)
@@ -275,9 +251,6 @@ static void StartSensorTask(void *argument)
 {
   (void)argument;
 
-  uint32_t n = 0;                      /* ⚠️ 验收用，第 4 步删 */
-  uint32_t last_dump = xTaskGetTickCount();      /* ⚠️ 验收用，第 4 步删 */
-
   for(;;)
   {
     uint32_t now = xTaskGetTickCount();
@@ -293,25 +266,11 @@ static void StartSensorTask(void *argument)
         {
           if (DEV_OK != it->read(it->ctx)) { if(it->fail_cnt < UINT16_MAX) it->fail_cnt++; }   /* 记到本人头上 */
           else                             { it->fail_cnt = 0; } /* 成功就清零 */
-          n++;
         }
         it->next_due += it->period_ms;             //累加一个周期 
       }
       uint32_t d = it->next_due - now;          //离下次到期还有多久 
       if ((int32_t)d < (int32_t)wait) { wait = d; }
-    }
-
-    uint32_t now2 = xTaskGetTickCount();                     /* ⚠️ 验收用 */
-    if ((now2 - last_dump) >= pdMS_TO_TICKS(1000))           /* ⚠️ 验收用 */
-    {
-      last_dump = now2;
-      uint16_t f = 0;
-      (void)SensorFailCount("mpu6050", &f);        /* 站在消费者位置查账 */
-      SEGGER_RTT_printf(0, "TBL n=%u mpu_f=%u find=%u ax=%d\r\n",
-                      (unsigned)n, (unsigned)f,
-                      (unsigned)SensorFailCount("nope", NULL),   /* 故意查不存在的 */
-                      (int)s_mpu_ctx.raw.ax);
-      n = 0; 
     }
 
     if((int32_t)wait <= 0)  wait = 1;       //已过期：至少睡 1 tick
@@ -349,62 +308,6 @@ static void StartAht21Task(void *argument)
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
-
-static void StartMpu6050Task(void *argument)
-{
-  (void)argument;
-
-  mpu6050_data_t d;
-  memset(&d, 0, sizeof d);          /* 失败时裸层不动出参，先把脏值清掉 */
-
-  uint8_t  id        = 0;
-  uint32_t n_total   = 0;           /* 读了多少次            */
-  uint32_t n_fail    = 0;           /* ① 返回值非 OK         */
-  uint32_t n_pfail   = 0;           /* ②-a 探针没跑通（NACK） */
-  uint32_t n_idbad   = 0;           /* ②-b 探针通了但值不对   */
-  uint32_t n_slow    = 0;           /* ③ 耗时超门槛           */
-  uint32_t us_max    = 0;
-  uint32_t last_dump = xTaskGetTickCount();
-
-  for (;;)
-  {
-    /* ② 参照量探针：独立事务，放在计时窗口之外 */
-    uint8_t probe = i2c_mem_read(MPU_PROBE_ADDR7, MPU_WHO_AM_I_REG, &id, 1);
-
-    /* ③ 计时窗口：只包住"读一次" */
-    uint32_t t0 = DWT->CYCCNT;
-    mpu6050_err_t r = mpu6050_read(&d);
-    uint32_t t1 = DWT->CYCCNT;
-
-    uint32_t us = CycToUs(t1 - t0);
-    if (us > us_max) { us_max = us; }
-
-    n_total++;
-    if (r != MPU6050_OK) { n_fail++; }
-
-    /* 探针失败 ⇒ id 是上一次的旧值，不可再判它（else if 是这里的关键） */
-    if (probe != 0)                    { n_pfail++; }
-    else if (id != MPU_WHO_AM_I_EXPECT) { n_idbad++; }
-
-    if (us > MPU_SLOW_US) { n_slow++; }
-
-    uint32_t now = xTaskGetTickCount();
-    if ((now - last_dump) >= pdMS_TO_TICKS(1000))
-    {
-      last_dump = now;
-      SEGGER_RTT_printf(0,
-        "n=%u fail=%u pfail=%u idbad=%u slow=%u us=%u max=%u pr=%u idv=%02X ax=%d hw=%u\r\n",
-        (unsigned)n_total, (unsigned)n_fail, (unsigned)n_pfail, (unsigned)n_idbad,
-        (unsigned)n_slow, (unsigned)us, (unsigned)us_max, (unsigned)probe,
-        (unsigned)id, (int)d.raw.ax,
-        (unsigned)uxTaskGetStackHighWaterMark(NULL));
-      us_max = 0;
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(20));
-  }
-}
-
 /* 栈溢出钩子：覆盖 CMSIS 的 __WEAK 版（cmsis_os2.c）。
  * 打印任务名后关中断停机 —— 便于用 Ozone 接上抓现场，别让它继续踩内存。 */
 void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName)
