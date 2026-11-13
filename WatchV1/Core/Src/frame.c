@@ -4,7 +4,7 @@
 #define FRAME_HEAD0     0xAAu
 #define FRAME_HEAD1     0x55u
 #define FRAME_MAX_DATA  32u          /* 单帧数据区上限 */
-#define FRAME_TIMEOUT_MS  4         /*最大静默时间*/
+#define FRAME_TIMEOUT_MS  4          /*最大静默时间*/
 
 /* 对账用的五个计数器：g_ok 数的是"帧"，其余四个数的是"字节"——口径不同，看日志时别混 */
 static uint32_t g_ok       = 0;   /* 整帧通过校验并已交付的帧数（不含被丢弃的） */
@@ -84,6 +84,15 @@ frame_err_t frame_poll(uint32_t now_ms, uint8_t *out, uint8_t *out_len)
 {
     if ((NULL == out) || (NULL == out_len))  return FRAME_WAIT;  /* 空指针判断 */
 
+    uint16_t avail_now = uart_rx_avail();
+    if (0 == avail_now)          /* 环被抽空：没有"半帧"在进行，把基准复位 */
+    {
+        g_last_avail  = 0;
+        g_idle_since  = now_ms;
+        g_timer_armed = 1;
+        return FRAME_WAIT;
+    }
+
     if (uart_rx_avail() < 3)    return FRAME_WAIT;      /* 帧头2 + 长度1 都读不满 */
                                                         /* 可能开头是帧头，所以FRAME_WAIT */
     uint8_t b0 = 0, b1 = 0, len = 0;    /* 初始化数据 */
@@ -133,6 +142,8 @@ frame_err_t frame_poll(uint32_t now_ms, uint8_t *out, uint8_t *out_len)
             uart_rx_at((uint16_t)(i + 3), &out[i]);    /*起点为i+3，跳过帧头和长度位;<len,跳过帧尾*/  
         }
         uart_rx_drop(need);    /* 丢掉整帧 */
+        g_last_avail = 0;      /* 交付完，基准归零，别让下一帧撞上陈旧水位 */
+        g_idle_since = now_ms;
         *out_len = len;
         g_ok ++;
         return FRAME_OK;
