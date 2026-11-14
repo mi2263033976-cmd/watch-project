@@ -89,10 +89,8 @@ TaskHandle_t sensorTaskHandle = NULL;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128,
-  .priority = (osPriority_t) osPriorityIdle,   /* = FreeRTOS 优先级 1（tskIDLE_PRIORITY+1）：
-                                                 占位任务只跑 osDelay，给最低，别跟 Aht21(3)/Rx(4) 抢。
-                                                 ⚠️ CubeMX 重生成会冲掉本行 —— 见下方 USER CODE 警示。 */
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 
 /* Private function prototypes -----------------------------------------------*/

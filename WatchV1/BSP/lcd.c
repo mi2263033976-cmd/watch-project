@@ -12,6 +12,7 @@
   */
 #include "lcd.h"
 #include "spi.h"        /* CubeMX 生成：hspi1 */
+#include "SEGGER_RTT.h" /* 只为打印填色耗时（W10 刷新策略会用到） */
 
 /* ============ ① 引脚操作宏（对应 CubeMX 里的 User Label）============ */
 #define CS_L()    HAL_GPIO_WritePin(LCD_CS_GPIO_Port,  LCD_CS_Pin,  GPIO_PIN_RESET)
@@ -38,16 +39,17 @@ static void LCD_WriteData(const uint8_t *buf, uint16_t len)
     CS_H();
 }
 
-/* ============ ③ 设显存窗口（CASET + RASET + RAMWR，一个 CS 窗口内）============
-   ⚠️ 必须加偏移：本屏 240x280，ST7789 显存 240x320，行要 +20 */
-void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+/* ============ ③ 设显存窗口（CASET + RASET + RAMWR）============
+   ⚠️ 必须加偏移：本屏 240x280，ST7789 显存 240x320，行要 +20
+   ⚠️ 分两层：_NoCs 版假定调用者已经把 CS 拉低，而且【结尾不拉高 CS】。
+      原因：RAMWR(0x2C) 之后的像素数据必须紧跟着同一个 CS 帧送出去。 */
+static void LCD_SetWindow_NoCs(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
     uint8_t p[4];
 
     x0 = (uint16_t)(x0 + LCD_X_OFFSET);  x1 = (uint16_t)(x1 + LCD_X_OFFSET);
     y0 = (uint16_t)(y0 + LCD_Y_OFFSET);  y1 = (uint16_t)(y1 + LCD_Y_OFFSET);
 
-    CS_L();
     DC_CMD();
     p[0] = 0x2A; HAL_SPI_Transmit(&hspi1, p, 1, 100);          /* CASET */
     DC_DATA();
@@ -64,6 +66,14 @@ void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 
     DC_CMD();
     p[0] = 0x2C; HAL_SPI_Transmit(&hspi1, p, 1, 100);          /* RAMWR */
+    DC_DATA();                                                 /* 之后紧跟像素数据 */
+}
+
+/* 对外版：自成一套 CS 帧（只设窗口、不灌像素时用得上） */
+void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    CS_L();
+    LCD_SetWindow_NoCs(x0, y0, x1, y1);
     CS_H();
 }
 
@@ -108,6 +118,7 @@ void LCD_Init(void)
 
     LCD_WriteCmd(0x21);                                       /* INVON  反显 */
     LCD_WriteCmd(0x11);                                       /* SLPOUT 退出睡眠 */
+    HAL_Delay(120);                                           /* ★ ST7789 要求 SLPOUT 后 ≥120ms 才能发后续命令 */
     LCD_WriteCmd(0x13);                                       /* NORON  常规显示 */
     LCD_WriteCmd(0x29);                                       /* DISPON 开显示 */
     HAL_Delay(50);
@@ -118,18 +129,33 @@ void LCD_FillScreen(uint16_t color)
 {
     static uint8_t line[LCD_WIDTH * 2];   /* 一行像素（RGB565 = 2 字节/像素）*/
     uint16_t i, y;
+    uint32_t t0;
 
     for (i = 0U; i < LCD_WIDTH; i++) {
         line[i * 2U]      = (uint8_t)(color >> 8);
         line[i * 2U + 1U] = (uint8_t)(color & 0xFFU);
     }
 
-    LCD_SetWindow(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
+    t0 = HAL_GetTick();
 
+    /* 关键：窗口 + RAMWR + 所有像素，全程一个 CS 低电平，中间不松 CS */
     CS_L();
-    DC_DATA();
+    LCD_SetWindow_NoCs(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
     for (y = 0U; y < LCD_HEIGHT; y++) {
         HAL_SPI_Transmit(&hspi1, line, (uint16_t)sizeof(line), 1000);
     }
     CS_H();
+
+    SEGGER_RTT_printf(0, "[LCD] fill 0x%04X took %u ms\r\n",
+                      (unsigned)color, (unsigned)(HAL_GetTick() - t0));
+}
+
+/* 背光开关（PWM 以后替换本函数实现） */
+void LCD_Backlight(uint8_t on)
+{
+    if (on) {
+        HAL_GPIO_WritePin(LCD_BLK_GPIO_Port, LCD_BLK_Pin, GPIO_PIN_SET);
+    } else {
+        HAL_GPIO_WritePin(LCD_BLK_GPIO_Port, LCD_BLK_Pin, GPIO_PIN_RESET);
+    }
 }

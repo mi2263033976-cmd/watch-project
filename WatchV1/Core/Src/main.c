@@ -21,7 +21,6 @@
 #include "cmsis_os.h"
 #include "dma.h"
 #include "spi.h"
-#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -148,10 +147,9 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART1_UART_Init();
-  MX_TIM3_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  i2c_gpio_init();         /* ⚠️ 必须留在 USER CODE 区：把 PB7/PB8 覆盖成开漏（放生成区会被 CubeMX 删掉） */
+  i2c_gpio_init();         /* ⚠️ 必须留在 USER CODE 区：把 PB7/PB8  覆盖成开漏（放生成区会被 CubeMX 删掉） */
 
   SEGGER_RTT_Init();                            /* 先把日志起起来（下面才好打） */
   SEGGER_RTT_printf(0, "--- boot ---\r\n");
@@ -196,14 +194,17 @@ int main(void)
 
 
 //    /* ---- W1 块 2：点亮屏 ---- */
-//  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);              /* ① 背光先亮起来 */
-//  SEGGER_RTT_printf(0, "LCD init...\r\n");
-//  LCD_Init();                                            /* ③ 屏初始化 */
-//  SEGGER_RTT_printf(0, "LCD init done\r\n");
+  LCD_Init();                                            /* ③ 屏初始化 */
+  SEGGER_RTT_printf(0, "LCD init done\r\n");
 
-  
-
- 
+  LCD_Backlight(1);                                      /* ④ 背光开启 */
+  /* ⑤ 三色轮播：用来判断“数据到底有没有进显存”
+     —— 单色看不出变化，三色对比才看得见 */
+  LCD_FillScreen(LCD_RED);   HAL_Delay(1000);
+  LCD_FillScreen(LCD_WHITE); HAL_Delay(1000);
+  LCD_FillScreen(LCD_BLACK); HAL_Delay(1000);
+  LCD_FillScreen(LCD_GREEN); HAL_Delay(1000);
+  SEGGER_RTT_printf(0, "color ramp done\r\n");
   /* USER CODE END 2 */
 
   /* Init scheduler */
