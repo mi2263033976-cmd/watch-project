@@ -205,6 +205,15 @@ int main(void)
   LCD_FillScreen(LCD_BLACK); HAL_Delay(1000);
   LCD_FillScreen(LCD_GREEN); HAL_Delay(1000);
   SEGGER_RTT_printf(0, "color ramp done\r\n");
+  LCD_FillScreen(LCD_BLACK);              /* 先铺黑底，白的点才看得见 */
+
+  /* ⑥ 一行字：验证字模表 + 步进 + 截断 */
+  (void)LCD_DrawString(10, 10, "25.6", LCD_WHITE, LCD_BLACK);
+  (void)LCD_DrawString(10, 40, "12:30", LCD_CYAN, LCD_BLACK);
+  (void)LCD_DrawString(10, 70, "-7.5", LCD_YELLOW, LCD_BLACK);
+  /* 表外字符（'#'）+ 截断：这条会打在屏右边缘，超出的字符应该自动不画 */
+  (void)LCD_DrawString(200, 100, "#8888888888", LCD_RED, LCD_BLACK);
+  SEGGER_RTT_printf(0, "drawstring done\r\n");
   /* USER CODE END 2 */
 
   /* Init scheduler */

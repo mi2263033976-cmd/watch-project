@@ -30,7 +30,7 @@ JLinkSettings.ini
 *.log
 
 # 我加的临时备份（2026-10-20 起不入库）
-*.bak-*
+*.bak*
 
 # 改动前的临时备份（2026-11-15 起不入库）
 *.pre-cleanup-*

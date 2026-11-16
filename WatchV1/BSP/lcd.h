@@ -26,8 +26,15 @@
 #define LCD_CYAN    0x07FF
 #define LCD_MAGENTA 0xF81F
 
+/* ---- 字模参数（按最宽的字符定：'M'/'W' 会顶满 8 列，所以必须留 1 格缝） ---- */
+#define LCD_FONT_W     8     /* 字模宽（像素） */
+#define LCD_FONT_H     16    /* 字模高（像素） */
+#define LCD_FONT_ADV   9     /* 步进 = 宽 + 1 格缝 */
+
 void LCD_Init(void);
 void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 void LCD_FillScreen(uint16_t color);
 void LCD_Backlight(uint8_t on);
+void LCD_DrawGlyph(uint16_t x, uint16_t y, const uint8_t *glyph, uint16_t fg, uint16_t bg);
+uint16_t LCD_DrawString(uint16_t x, uint16_t y, const char *s, uint16_t fg, uint16_t bg);
 #endif /* __LCD_H */

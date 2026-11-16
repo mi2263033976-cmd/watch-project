@@ -159,3 +159,93 @@ void LCD_Backlight(uint8_t on)
         HAL_GPIO_WritePin(LCD_BLK_GPIO_Port, LCD_BLK_Pin, GPIO_PIN_RESET);
     }
 }
+
+/* 画一个 8x16 字符：(x,y) 是这个字符格子的左上角
+   bit=1 → 写前景色；bit=0 → 写背景色（整片重写，旧内容会被盖掉） */
+void LCD_DrawGlyph(uint16_t x, uint16_t y, const uint8_t *glyph,
+                   uint16_t fg, uint16_t bg)
+{
+    static uint8_t buf[8 * 16 * 2];        /* 8×16 像素 × 2 字节 = 256 B，复用 */
+    uint16_t row, col, idx, c;             /* 行号、列号、字节下标、当前颜色 */
+
+    for (row = 0U; row < 16U; row++) {
+        for (col = 0U; col < 8U; col++) {
+            uint8_t bit = (uint8_t)((glyph[row] >> (7U - col)) & 0x01U);    //取第 col 个点是不是亮的
+            c   = bit ? fg : bg;                        // 点亮前景色，不亮就填背景色
+            idx = (uint16_t)((row * 8U + col) * 2U);    //塞颜色
+            buf[idx]      = (uint8_t)(c >> 8);
+            buf[idx + 1U] = (uint8_t)(c & 0xFFU);
+        }
+    }
+
+    CS_L();
+    LCD_SetWindow_NoCs(x, y, (uint16_t)(x + 7U), (uint16_t)(y + 15U));
+    HAL_SPI_Transmit(&hspi1, buf, (uint16_t)sizeof(buf), 1000);
+    CS_H();
+}
+
+/* ============ ⑥ 最小字模表（只要能显示"25.6"「12:30」这类读数）============
+   8x16、逐行、MSB 在最左 —— 与 LCD_DrawGlyph 的取位方式一致。
+   只放要用的 13 个字符；以后要扩到整张 ASCII，用 95 项 × 16 B 的表替换即可，
+   下面的 LCD_DrawString 一行都不用改（它只认"给我一张 8x16 的图"）。 */
+
+/* 全 0 字模：专门用来"只刷背景色"，防残影 */
+static const uint8_t glyph_blank[16] = { 0 };
+
+static const uint8_t glyph_digit[10 * 16] = {
+    /* '0' */ 0x00, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x46, 0x4A, 0x52, 0x62, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x00,
+    /* '1' */ 0x00, 0x00, 0x00, 0x00, 0x18, 0x28, 0x48, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x3F, 0x00, 0x00,
+    /* '2' */ 0x00, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x40, 0x7E, 0x00, 0x00,
+    /* '3' */ 0x00, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x02, 0x02, 0x1C, 0x02, 0x02, 0x02, 0x42, 0x3C, 0x00, 0x00,
+    /* '4' */ 0x00, 0x00, 0x00, 0x00, 0x0C, 0x14, 0x24, 0x44, 0x44, 0x7E, 0x04, 0x04, 0x04, 0x04, 0x00, 0x00,
+    /* '5' */ 0x00, 0x00, 0x00, 0x00, 0x7E, 0x40, 0x40, 0x7C, 0x02, 0x02, 0x02, 0x42, 0x42, 0x3C, 0x00, 0x00,
+    /* '6' */ 0x00, 0x00, 0x00, 0x00, 0x1C, 0x20, 0x40, 0x40, 0x7C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x00,
+    /* '7' */ 0x00, 0x00, 0x00, 0x00, 0x7E, 0x02, 0x04, 0x08, 0x10, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x00,
+    /* '8' */ 0x00, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x42, 0x42, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x00,
+    /* '9' */ 0x00, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x42, 0x42, 0x3E, 0x02, 0x02, 0x02, 0x42, 0x3C, 0x00, 0x00
+};
+
+static const uint8_t glyph_dot[16]   = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                         0x00, 0x00, 0x00, 0x00, 0x30, 0x30, 0x00, 0x00 };
+static const uint8_t glyph_colon[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                         0x30, 0x30, 0x00, 0x00, 0x30, 0x30, 0x00, 0x00 };
+static const uint8_t glyph_dash[16]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                         0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+/* 字符 → 字模指针；表里没有的返回"全 0 字模"（照样刷一次背景，防残影） */
+static const uint8_t *LCD_FindGlyph(char c)
+{
+    switch (c) {
+        case '.': return glyph_dot;
+        case ':': return glyph_colon;
+        case '-': return glyph_dash;
+        case ' ': return glyph_blank;
+        default:  break;
+    }
+    if ((c >= '0') && (c <= '9')) {
+        return &glyph_digit[(uint16_t)(c - '0') * LCD_FONT_H];
+    }
+    return glyph_blank;          /* 表外字符 / 中文 / \r 等：只擦不画 */
+}
+
+/* ============ ⑦ 画一行字 ============
+   (x,y) = 第一个字符的左上角；返回画完之后的 x（方便接着画别的）。
+   两种"收尾"行为，都是课上定过的：
+     · 装不下（x + 字宽 > 屏宽，或 y 出界）⇒ 直接停，不再往下画（截断）；
+     · 表里没有的字符 ⇒ 用全 0 字模刷一次背景，位置照常前进一格（防残影）。 */
+uint16_t LCD_DrawString(uint16_t x, uint16_t y, const char *s, uint16_t fg, uint16_t bg)
+{
+    if ((uint16_t)(y + LCD_FONT_H) > LCD_HEIGHT) {
+        return x;                                    /* 整行都在屏外，直接不画 */
+    }
+
+    while (*s != '\0') {
+        if ((uint16_t)(x + LCD_FONT_W) > LCD_WIDTH) {
+            break;                                   /* 截断：剩下的字符不画 */
+        }
+        LCD_DrawGlyph(x, y, LCD_FindGlyph(*s), fg, bg);
+        x = (uint16_t)(x + LCD_FONT_ADV);
+        s++;
+    }
+    return x;
+}
