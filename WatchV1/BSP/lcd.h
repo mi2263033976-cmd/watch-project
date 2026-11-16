@@ -37,4 +37,8 @@ void LCD_FillScreen(uint16_t color);
 void LCD_Backlight(uint8_t on);
 void LCD_DrawGlyph(uint16_t x, uint16_t y, const uint8_t *glyph, uint16_t fg, uint16_t bg);
 uint16_t LCD_DrawString(uint16_t x, uint16_t y, const char *s, uint16_t fg, uint16_t bg);
+/* 区域块写：把 RGB565 像素原样灌进矩形（LVGL flush 回调用）
+   len 必须 ≥ (x1-x0+1)*(y1-y0+1)*2，不足则整片不画 */
+void LCD_BlitArea(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1,
+                  const uint8_t *pixels, uint32_t len);
 #endif /* __LCD_H */

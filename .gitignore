@@ -34,3 +34,7 @@ JLinkSettings.ini
 
 # 改动前的临时备份（2026-11-15 起不入库）
 *.pre-cleanup-*
+
+# 改动前临时备份（2026-11-16 补：bak2/bak3 命名）
+*.bak2-*
+*.bak3-*

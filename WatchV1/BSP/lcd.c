@@ -228,7 +228,40 @@ static const uint8_t *LCD_FindGlyph(char c)
     return glyph_blank;          /* 表外字符 / 中文 / \r 等：只擦不画 */
 }
 
-/* ============ ⑦ 画一行字 ============
+/* ============ ⑦ 区域块写（LVGL flush 用的底层原语）============
+   只管"把这一片像素原样搬进这块矩形"，不认识字符、不认识 LVGL。
+   pixels 指向 RGB565 数据，长度必须 ≥ 宽 × 高 × 2 字节。
+   两个细节：
+     · 长度不够 ⇒ 直接返回，宁可不画，也不越界读（越界读会读到别的变量，屏幕乱码甚至 HardFault）；
+     · HAL_SPI_Transmit 的 Size 是 uint16_t（上限 65535），所以按 16 KB 分块送。 */
+void LCD_BlitArea(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1,
+                  const uint8_t *pixels, uint32_t len)
+{
+    uint32_t need;
+    uint32_t sent = 0U;
+
+    if ((pixels == NULL) || (x1 < x0) || (y1 < y0)) {
+        return;
+    }
+    need = ((uint32_t)(x1 - x0) + 1U) * ((uint32_t)(y1 - y0) + 1U) * 2U;
+    if (len < need) {
+        return;                                   /* 数据不够一片，宁可少画 */
+    }
+
+    CS_L();
+    LCD_SetWindow_NoCs(x0, y0, x1, y1);
+    while (sent < len) {
+        uint32_t left  = len - sent;
+        uint16_t chunk = (uint16_t)((left > 16384U) ? 16384U : left);
+        if (HAL_SPI_Transmit(&hspi1, (uint8_t *)pixels + sent, chunk, 1000) != HAL_OK) {
+            break;
+        }
+        sent += chunk;
+    }
+    CS_H();
+}
+
+/* ============ ⑧ 画一行字 ============
    (x,y) = 第一个字符的左上角；返回画完之后的 x（方便接着画别的）。
    两种"收尾"行为，都是课上定过的：
      · 装不下（x + 字宽 > 屏宽，或 y 出界）⇒ 直接停，不再往下画（截断）；

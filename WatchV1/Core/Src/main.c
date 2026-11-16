@@ -198,22 +198,10 @@ int main(void)
   SEGGER_RTT_printf(0, "LCD init done\r\n");
 
   LCD_Backlight(1);                                      /* ④ 背光开启 */
-  /* ⑤ 三色轮播：用来判断“数据到底有没有进显存”
-     —— 单色看不出变化，三色对比才看得见 */
-  LCD_FillScreen(LCD_RED);   HAL_Delay(1000);
-  LCD_FillScreen(LCD_WHITE); HAL_Delay(1000);
-  LCD_FillScreen(LCD_BLACK); HAL_Delay(1000);
-  LCD_FillScreen(LCD_GREEN); HAL_Delay(1000);
-  SEGGER_RTT_printf(0, "color ramp done\r\n");
-  LCD_FillScreen(LCD_BLACK);              /* 先铺黑底，白的点才看得见 */
-
-  /* ⑥ 一行字：验证字模表 + 步进 + 截断 */
-  (void)LCD_DrawString(10, 10, "25.6", LCD_WHITE, LCD_BLACK);
-  (void)LCD_DrawString(10, 40, "12:30", LCD_CYAN, LCD_BLACK);
-  (void)LCD_DrawString(10, 70, "-7.5", LCD_YELLOW, LCD_BLACK);
-  /* 表外字符（'#'）+ 截断：这条会打在屏右边缘，超出的字符应该自动不画 */
-  (void)LCD_DrawString(200, 100, "#8888888888", LCD_RED, LCD_BLACK);
-  SEGGER_RTT_printf(0, "drawstring done\r\n");
+  /* ⑤ 显示已交给 LVGL（2026-11-16 起）：
+     界面在 freertos.c 的 StartLvglTask 里建，这里只保留"硬件准备好"这一步。
+     原来的四色轮播 + DrawString 冒烟测试已删除——它们会和 LVGL 抢屏。
+     底层冒烟手段仍在：LCD_FillScreen / LCD_DrawString / LCD_BlitArea 都还能单独调。 */
   /* USER CODE END 2 */
 
   /* Init scheduler */

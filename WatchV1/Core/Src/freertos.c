@@ -35,6 +35,8 @@
 #include "frame.h"
 #include "string.h"
 #include "queue.h"
+#include "lvgl.h"            /* LVGL：显示 + 控件 */
+#include "lv_port_disp.h"    /* 显示移植层：flush_cb / 注册显示设备 */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -83,6 +85,7 @@ typedef struct {
 TaskHandle_t aht21TaskHandle = NULL;   /* Aht21Task 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t rxTaskHandle = NULL;       /* RxTask 句柄（动态创建，失败时为 NULL） */
 TaskHandle_t sensorTaskHandle = NULL;
+TaskHandle_t lvglTaskHandle = NULL;     /* LvglTask 句柄 */
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -98,6 +101,7 @@ const osThreadAttr_t defaultTask_attributes = {
 static void StartAht21Task(void *argument);
 static void StartRxTask(void *argument);
 static void StartSensorTask(void *argument);
+static void StartLvglTask(void *argument);      /* LVGL 单任务（非线程安全，只能一个任务碰它） */
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -174,6 +178,18 @@ void MX_FREERTOS_Init(void) {
    if (ret4 != pdPASS) {
     SEGGER_RTT_printf(0, "[ERR] SensorTask create failed, ret4=%d\r\n", (int)ret4);
   }                  
+
+  /* LVGL 任务：优先级给中档——它不是硬实时，但刷新太慢会看出卡顿。
+     栈给 512 word（2 KB）：LVGL 里控件创建/绘图有较深的调用链。 */
+  BaseType_t ret5 = xTaskCreate(StartLvglTask,
+                               "LvglTask",
+                               512,
+                               NULL,
+                               tskIDLE_PRIORITY + 2,
+                               &lvglTaskHandle);
+   if (ret5 != pdPASS) {
+    SEGGER_RTT_printf(0, "[ERR] LvglTask create failed, ret5=%d\r\n", (int)ret5);
+  }
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -372,6 +388,45 @@ static void StartRxTask(void *argument)
       if ((now - last_dump) >= pdMS_TO_TICKS(1000)) 
       { last_dump = now; frame_print_counters(); }        
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * LVGL 任务（单任务模型）
+ *   · LVGL 不是线程安全的，所以【只有这个任务】能调用 lv_* 系列函数；
+ *     别的任务要更新界面，只能写全局变量 / 发队列，由这里自己去取。
+ *   · lv_init() 放在任务里而不是 main 里：保证"初始化"和"使用"永远在同一个上下文。
+ * ═══════════════════════════════════════════════════════════════════════ */
+static void StartLvglTask(void *argument)
+{
+    lv_obj_t *scr;
+    lv_obj_t *label;
+    lv_obj_t *label2;
+    (void)argument;
+
+    lv_init();                    /* ① LVGL 内核初始化（必须先于一切 lv_* 调用） */
+    lv_port_disp_init();          /* ② 注册显示设备：屏幕尺寸 + flush 回调 + 缓冲 */
+
+    /* ③ 最小界面：黑底 + 两行字，用来验证「显示链通了、颜色对了、能刷新」 */
+    scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    label = lv_label_create(scr);
+    lv_label_set_text(label, "hello LVGL");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, -16);
+
+    label2 = lv_label_create(scr);
+    lv_label_set_text(label2, "240x280 RGB565");
+    lv_obj_set_style_text_color(label2, lv_color_hex(0x00FF00), LV_PART_MAIN);   /* 绿：用来一眼看出颜色对不对 */
+    lv_obj_align(label2, LV_ALIGN_CENTER, 0, 16);
+
+    SEGGER_RTT_printf(0, "[LVGL] init done\r\n");
+
+    for (;;) {
+        lv_timer_handler();       /* ④ 处理 LVGL 的定时/刷新逻辑，必须周期调用 */
+        osDelay(5);               /* 5 ms 一轮：太小空转浪费 CPU，太大动画卡 */
+    }
 }
 
 /* USER CODE END Application */
